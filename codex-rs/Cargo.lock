@@ -1608,6 +1608,7 @@ dependencies = [
  "assert_cmd",
  "assert_matches",
  "axum",
+ "base64 0.22.1",
  "clap",
  "clap_complete",
  "codex-app-server",

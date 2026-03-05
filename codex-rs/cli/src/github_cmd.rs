@@ -9,6 +9,8 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::routing::post;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use codex_core::config::find_codex_home;
 use codex_utils_cli::CliConfigOverrides;
 use hmac::Hmac;
@@ -919,7 +921,12 @@ async fn ensure_repo_and_worktree(state: &AppState, key: &WorkKey, work_dir: &Pa
 
 async fn ensure_clone(state: &AppState, key: &WorkKey, repo_dir: &Path) -> Result<()> {
     if repo_dir.join(".git").exists() {
-        run_git(repo_dir, git_args(&["fetch", "--prune", "origin"])).await?;
+        run_git(
+            repo_dir,
+            git_args(&["fetch", "--prune", "origin"]),
+            state.github_token.as_str(),
+        )
+        .await?;
         return Ok(());
     }
 
@@ -959,7 +966,9 @@ async fn ensure_clone(state: &AppState, key: &WorkKey, repo_dir: &Path) -> Resul
     let mut args = git_args(&["clone", "--filter=blob:none"]);
     args.push(url);
     args.push(repo_dir.display().to_string());
-    run_git(parent, args).await.context("git clone failed")?;
+    run_git(parent, args, state.github_token.as_str())
+        .await
+        .context("git clone failed")?;
 
     Ok(())
 }
@@ -1024,19 +1033,20 @@ async fn ensure_worktree(
             args.push(branch);
             args.push(work_dir.display().to_string());
             args.push(base);
-            run_git(repo_dir, args).await?;
+            run_git(repo_dir, args, state.github_token.as_str()).await?;
         }
         WorkKind::Pull => {
             let refspec = format!("pull/{}/head:{}", key.number, branch);
             run_git(
                 repo_dir,
                 vec!["fetch".to_string(), "origin".to_string(), refspec],
+                state.github_token.as_str(),
             )
             .await?;
             let mut args = git_args(&["worktree", "add"]);
             args.push(work_dir.display().to_string());
             args.push(branch);
-            run_git(repo_dir, args).await?;
+            run_git(repo_dir, args, state.github_token.as_str()).await?;
         }
     }
 
@@ -1047,13 +1057,28 @@ fn git_args(args: &[&str]) -> Vec<String> {
     args.iter().map(ToString::to_string).collect()
 }
 
-async fn run_git(cwd: &Path, args: Vec<String>) -> Result<()> {
+fn github_git_auth_header(token: &str) -> String {
+    let encoded = BASE64_STANDARD.encode(format!("x-access-token:{token}"));
+    format!("Authorization: basic {encoded}")
+}
+
+fn git_needs_auth(args: &[String]) -> bool {
+    matches!(args.first().map(String::as_str), Some("clone" | "fetch"))
+}
+
+async fn run_git(cwd: &Path, args: Vec<String>, github_token: &str) -> Result<()> {
     let mut cmd = tokio::process::Command::new("git");
     cmd.kill_on_drop(true);
     cmd.current_dir(cwd)
         .env("GIT_TERMINAL_PROMPT", "0")
-        .args(args)
         .env("LC_ALL", "C");
+    if git_needs_auth(&args) {
+        cmd.arg("-c").arg(format!(
+            "http.extraHeader={}",
+            github_git_auth_header(github_token)
+        ));
+    }
+    cmd.args(args);
     let output = tokio::time::timeout(GIT_COMMAND_TIMEOUT, cmd.output())
         .await
         .with_context(|| format!("git timed out in {}", cwd.display()))?
@@ -1289,6 +1314,14 @@ mod tests {
     #[test]
     fn github_clone_url_uses_port_443() {
         assert_eq!(github_clone_url("o", "r"), "https://github.com:443/o/r.git");
+    }
+
+    #[test]
+    fn github_git_auth_header_uses_basic_auth() {
+        assert_eq!(
+            github_git_auth_header("t"),
+            "Authorization: basic eC1hY2Nlc3MtdG9rZW46dA=="
+        );
     }
 
     #[test]

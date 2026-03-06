@@ -1,6 +1,14 @@
-import type { AgentState } from '@/types/api'
+type PlanStep = {
+    step?: string | null
+    status?: 'pending' | 'in_progress' | 'completed' | null
+}
 
-export function PlanUpdatePanel(props: { planUpdate: AgentState['planUpdate'] | null | undefined }) {
+type PlanUpdate = {
+    explanation?: string | null
+    plan?: PlanStep[] | null
+}
+
+export function PlanUpdatePanel(props: { planUpdate: PlanUpdate | null | undefined }) {
     const planUpdate = props.planUpdate
     if (!planUpdate) return null
 

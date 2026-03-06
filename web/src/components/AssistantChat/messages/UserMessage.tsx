@@ -1,7 +1,7 @@
 import { MessagePrimitive, useAssistantState } from '@assistant-ui/react'
 import { LazyRainbowText } from '@/components/LazyRainbowText'
 import { useHappyChatContext } from '@/components/AssistantChat/context'
-import type { HappyChatMessageMetadata } from '@/lib/assistant-runtime'
+import { getTextFromParts, type HappyChatMessageMetadata } from '@/lib/assistant-runtime'
 import { MessageStatusIndicator } from '@/components/AssistantChat/messages/MessageStatusIndicator'
 import { MessageAttachments } from '@/components/AssistantChat/messages/MessageAttachments'
 import { CliOutputBlock } from '@/components/CliOutputBlock'
@@ -11,7 +11,7 @@ export function HappyUserMessage() {
     const role = useAssistantState(({ message }) => message.role)
     const text = useAssistantState(({ message }) => {
         if (message.role !== 'user') return ''
-        return message.content.find((part) => part.type === 'text')?.text ?? ''
+        return getTextFromParts(message.content as readonly { type: string }[])
     })
     const status = useAssistantState(({ message }) => {
         if (message.role !== 'user') return undefined
@@ -35,7 +35,7 @@ export function HappyUserMessage() {
     const cliText = useAssistantState(({ message }) => {
         const custom = message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined
         if (custom?.kind !== 'cli-output') return ''
-        return message.content.find((part) => part.type === 'text')?.text ?? ''
+        return getTextFromParts(message.content as readonly { type: string }[])
     })
 
     if (role !== 'user') return null

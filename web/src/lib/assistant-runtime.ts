@@ -115,7 +115,7 @@ function toThreadMessageLike(block: ChatBlock): ThreadMessageLike {
 
 type TextMessagePart = { type: 'text'; text: string }
 
-function getTextFromParts(parts: readonly { type: string }[] | undefined): string {
+export function getTextFromParts(parts: readonly { type: string }[] | undefined): string {
     if (!parts) return ''
 
     return parts

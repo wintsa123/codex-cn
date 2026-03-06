@@ -3,7 +3,7 @@ import { MarkdownText } from '@/components/assistant-ui/markdown-text'
 import { Reasoning, ReasoningGroup } from '@/components/assistant-ui/reasoning'
 import { HappyToolMessage } from '@/components/AssistantChat/messages/ToolMessage'
 import { CliOutputBlock } from '@/components/CliOutputBlock'
-import type { HappyChatMessageMetadata } from '@/lib/assistant-runtime'
+import { getTextFromParts, type HappyChatMessageMetadata } from '@/lib/assistant-runtime'
 
 const TOOL_COMPONENTS = {
     Fallback: HappyToolMessage
@@ -24,7 +24,7 @@ export function HappyAssistantMessage() {
     const cliText = useAssistantState(({ message }) => {
         const custom = message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined
         if (custom?.kind !== 'cli-output') return ''
-        return message.content.find((part) => part.type === 'text')?.text ?? ''
+        return getTextFromParts(message.content as readonly { type: string }[])
     })
     const toolOnly = useAssistantState(({ message }) => {
         if (message.role !== 'assistant') return false

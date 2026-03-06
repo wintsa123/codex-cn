@@ -69,7 +69,7 @@ export const LANGUAGES: Language[] = [
  * Format display name for a language
  */
 export const getLanguageDisplayName = (language: Language) => {
-    const parts = [];
+    const parts: string[] = [];
 
     if (language.name !== language.nativeName) {
         parts.push(`${language.name} (${language.nativeName})`);

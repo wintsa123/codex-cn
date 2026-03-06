@@ -1,3 +1,4 @@
+import type { ReactElement } from 'react'
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { I18nContext } from '@/lib/i18n-context'
@@ -24,7 +25,7 @@ function makeToolBlock(toolName: string, result: unknown) {
     } as const
 }
 
-function renderWithT(ui: JSX.Element) {
+function renderWithT(ui: ReactElement) {
     return render(
         <I18nContext.Provider value={{ t: (key: string) => key, locale: 'en', setLocale: vi.fn() }}>
             {ui}

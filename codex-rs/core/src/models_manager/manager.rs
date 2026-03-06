@@ -1039,4 +1039,9 @@ mod tests {
             "bundled models.json should contain at least one model"
         );
     }
+
+    #[test]
+    fn bundled_catalog_default_model_prefers_latest_visible_model() {
+        assert_eq!(ModelsManager::get_model_offline_for_tests(None), "gpt-5.4");
+    }
 }

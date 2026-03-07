@@ -38,14 +38,6 @@ const STARTUP_CONTEXT_HEADER: &str = "Startup context from Codex.";
 const MEMORY_PROMPT_PHRASE: &str =
     "You have access to a memory folder with guidance from prior runs.";
 
-fn websocket_request_text(
-    request: &core_test_support::responses::WebSocketRequest,
-) -> Option<String> {
-    request.body_json()["item"]["content"][0]["text"]
-        .as_str()
-        .map(str::to_owned)
-}
-
 fn websocket_request_instructions(
     request: &core_test_support::responses::WebSocketRequest,
 ) -> Option<String> {

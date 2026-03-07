@@ -314,7 +314,7 @@ async fn plugin_apps_expose_tools_after_canonical_name_mention() -> Result<()> {
         .with_home(codex_home)
         .with_auth(CodexAuth::from_api_key("Test API Key"))
         .with_config(move |config| {
-            config.features.enable(Feature::Apps);
+            let _ = config.features.enable(Feature::Apps);
             config.features.disable(Feature::AppsMcpGateway);
             config.chatgpt_base_url = apps_server.chatgpt_base_url;
         });

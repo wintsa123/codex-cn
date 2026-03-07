@@ -290,7 +290,7 @@ async fn web_search_marks_thread_memory_mode_polluted_when_configured() -> Resul
     .await;
 
     let mut builder = test_codex().with_config(|config| {
-        config.features.enable(Feature::Sqlite);
+        let _ = config.features.enable(Feature::Sqlite);
         config.memories.no_memories_if_mcp_or_web_search = true;
     });
     let test = builder.build(&server).await?;
@@ -340,7 +340,7 @@ async fn mcp_call_marks_thread_memory_mode_polluted_when_configured() -> Result<
 
     let rmcp_test_server_bin = stdio_server_bin()?;
     let mut builder = test_codex().with_config(move |config| {
-        config.features.enable(Feature::Sqlite);
+        let _ = config.features.enable(Feature::Sqlite);
         config.memories.no_memories_if_mcp_or_web_search = true;
 
         let mut servers = config.mcp_servers.get().clone();

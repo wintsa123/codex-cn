@@ -2874,7 +2874,7 @@ phase_2_model = "gpt-5"
             .expect("TOML deserialization should succeed");
         assert_eq!(expected_memories_toml, legacy_memories_cfg.memories);
 
-        let config = Config::load_from_base_config_with_overrides(
+        let _config = Config::load_from_base_config_with_overrides(
             memories_cfg,
             ConfigOverrides::default(),
             tempdir().expect("tempdir").path().to_path_buf(),

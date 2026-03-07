@@ -96,6 +96,7 @@ impl ToolsConfig {
             web_search_mode,
             session_source,
             scheduled_tasks_enabled,
+            scheduled_tasks_enabled: false,
         } = params;
         let include_apply_patch_tool = features.enabled(Feature::ApplyPatchFreeform);
         let include_js_repl = features.enabled(Feature::JsRepl);
@@ -3202,6 +3203,7 @@ mod tests {
             features: &default_features,
             web_search_mode: Some(WebSearchMode::Cached),
             session_source: SessionSource::Cli,
+            scheduled_tasks_enabled: false,
         });
         let (default_tools, _) = build_specs(&default_tools_config, None, None, &[]).build();
         assert!(
@@ -3216,6 +3218,7 @@ mod tests {
             features: &image_generation_features,
             web_search_mode: Some(WebSearchMode::Cached),
             session_source: SessionSource::Cli,
+            scheduled_tasks_enabled: false,
         });
         let (supported_tools, _) = build_specs(&supported_tools_config, None, None, &[]).build();
         assert_contains_tool_names(&supported_tools, &["image_generation"]);
@@ -3233,6 +3236,7 @@ mod tests {
             features: &image_generation_features,
             web_search_mode: Some(WebSearchMode::Cached),
             session_source: SessionSource::Cli,
+            scheduled_tasks_enabled: false,
         });
         let (tools, _) = build_specs(&tools_config, None, None, &[]).build();
         assert!(
@@ -3377,6 +3381,7 @@ mod tests {
             features: &features,
             web_search_mode: Some(WebSearchMode::Live),
             session_source: SessionSource::Cli,
+            scheduled_tasks_enabled: false,
         })
         .with_web_search_config(Some(web_search_config.clone()));
         let (tools, _) = build_specs(&tools_config, None, None, &[]).build();
@@ -3407,6 +3412,7 @@ mod tests {
             features: &features,
             web_search_mode: Some(WebSearchMode::Live),
             session_source: SessionSource::Cli,
+            scheduled_tasks_enabled: false,
         });
         let (tools, _) = build_specs(&tools_config, None, None, &[]).build();
 

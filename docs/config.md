@@ -85,6 +85,30 @@ See the configuration reference for the latest hook settings:
 
 When Codex knows which client started the turn, the legacy notify JSON payload also includes a top-level `client` field. The TUI reports `codex-tui`, and the app server reports the `clientInfo.name` value from `initialize`.
 
+## Scheduled tasks
+
+Scheduled-task tools and the TUI `/loop` shortcut are enabled by default. To keep `/loop` available, leave `disable_cron` unset or set it to `false` in `config.toml`:
+
+```toml
+disable_cron = false
+```
+
+To disable `/loop` and the scheduled-task tools globally:
+
+```toml
+disable_cron = true
+```
+
+You can also override the setting per profile. The active profile wins over the root setting:
+
+```toml
+disable_cron = true
+profile = "scheduled"
+
+[profiles.scheduled]
+disable_cron = false
+```
+
 ## JSON Schema
 
 The generated JSON Schema for `config.toml` lives at `codex-rs/core/config.schema.json`.
@@ -92,8 +116,7 @@ The generated JSON Schema for `config.toml` lives at `codex-rs/core/config.schem
 ## SQLite State DB
 
 Codex stores the SQLite-backed state DB under `sqlite_home` (config key) or the
-`CODEX_SQLITE_HOME` environment variable. When unset, WorkspaceWrite sandbox
-sessions default to a temp directory; other modes default to `CODEX_HOME`.
+`CODEX_SQLITE_HOME` environment variable. When unset, it defaults to `CODEX_HOME`.
 
 ## Notices
 

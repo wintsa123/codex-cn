@@ -807,6 +807,153 @@ fn append_text_with_rebased_elements(
     }));
 }
 
+const LOOP_USAGE: &str = "Usage: /loop [interval] <prompt>";
+const LOOP_DEFAULT_INTERVAL: &str = "10m";
+
+struct ParsedLoopArgs {
+    interval: String,
+    prompt_range: std::ops::Range<usize>,
+}
+
+fn parse_loop_args(args: &str) -> Result<ParsedLoopArgs, &'static str> {
+    let trimmed_start = args
+        .find(|character: char| !character.is_whitespace())
+        .unwrap_or(args.len());
+    let trimmed_end = args.trim_end().len();
+    if trimmed_start >= trimmed_end {
+        return Err(LOOP_USAGE);
+    }
+    let trimmed = &args[trimmed_start..trimmed_end];
+
+    if let Some((interval, prompt_start)) = parse_leading_loop_interval(trimmed) {
+        return Ok(ParsedLoopArgs {
+            interval,
+            prompt_range: (trimmed_start + prompt_start)..trimmed_end,
+        });
+    }
+
+    if let Some((interval, prompt_end)) = parse_trailing_loop_interval(trimmed) {
+        return Ok(ParsedLoopArgs {
+            interval,
+            prompt_range: trimmed_start..(trimmed_start + prompt_end),
+        });
+    }
+
+    Ok(ParsedLoopArgs {
+        interval: LOOP_DEFAULT_INTERVAL.to_string(),
+        prompt_range: trimmed_start..trimmed_end,
+    })
+}
+
+fn parse_leading_loop_interval(trimmed: &str) -> Option<(String, usize)> {
+    let split_index = trimmed.find(|character: char| character.is_whitespace())?;
+    let first = &trimmed[..split_index];
+    let interval = parse_loop_interval(first)?;
+    let prompt = trimmed[split_index..].trim_start();
+    if prompt.is_empty() {
+        return None;
+    }
+    Some((interval, trimmed.len() - prompt.len()))
+}
+
+fn parse_trailing_loop_interval(trimmed: &str) -> Option<(String, usize)> {
+    let marker = trimmed.rfind(" every ")?;
+    let suffix = trimmed.get(marker + " every ".len()..)?.trim();
+    let interval = parse_every_suffix_interval(suffix)?;
+    let prompt = trimmed[..marker].trim_end();
+    if prompt.is_empty() {
+        return None;
+    }
+    Some((interval, prompt.len()))
+}
+
+fn parse_every_suffix_interval(suffix: &str) -> Option<String> {
+    let parts = suffix.split_whitespace().collect::<Vec<_>>();
+    match parts.as_slice() {
+        [unit] => normalize_loop_interval("1", unit),
+        [count, unit] => normalize_loop_interval(count, unit),
+        _ => None,
+    }
+}
+
+fn parse_loop_interval(token: &str) -> Option<String> {
+    let split_index = token
+        .find(|character: char| !character.is_ascii_digit())
+        .unwrap_or(token.len());
+    if split_index == 0 || split_index == token.len() {
+        return None;
+    }
+
+    normalize_loop_interval(&token[..split_index], &token[split_index..])
+}
+
+fn normalize_loop_interval(count: &str, unit: &str) -> Option<String> {
+    count
+        .parse::<u32>()
+        .ok()
+        .filter(|value| *value > 0)
+        .and_then(|value| match unit.to_ascii_lowercase().as_str() {
+            "s" | "sec" | "secs" | "second" | "seconds" => Some(format!("{value}s")),
+            "m" | "min" | "mins" | "minute" | "minutes" => Some(format!("{value}m")),
+            "h" | "hr" | "hrs" | "hour" | "hours" => Some(format!("{value}h")),
+            "d" | "day" | "days" => Some(format!("{value}d")),
+            _ => None,
+        })
+}
+
+fn slice_text_elements(
+    text_elements: Vec<TextElement>,
+    range: std::ops::Range<usize>,
+) -> Vec<TextElement> {
+    text_elements
+        .into_iter()
+        .filter(|element| {
+            element.byte_range.start >= range.start && element.byte_range.end <= range.end
+        })
+        .map(|element| {
+            element.map_range(|current| {
+                ((current.start - range.start)..(current.end - range.start)).into()
+            })
+        })
+        .collect()
+}
+
+fn build_loop_user_message(interval: &str, prompt_message: UserMessage) -> UserMessage {
+    let UserMessage {
+        text,
+        local_images,
+        remote_image_urls,
+        text_elements,
+        mention_bindings,
+    } = prompt_message;
+    let prefix = format!(
+        "Use the `CronCreate` tool to create a recurring scheduled task.
+Convert this interval into a valid 5-field cron schedule: {interval}
+If the interval includes seconds, round it up to the nearest minute because cron does not support seconds.
+If the requested cadence does not map cleanly to cron, choose the nearest clean interval and mention the final cadence you picked.
+Set `prompt` to exactly the text below.
+Call the tool first. After it succeeds, reply briefly with the scheduled cadence and any rounding you applied.
+
+"
+    );
+    let mut rebuilt_text = prefix;
+    let mut rebuilt_elements = Vec::new();
+    append_text_with_rebased_elements(
+        &mut rebuilt_text,
+        &mut rebuilt_elements,
+        &text,
+        text_elements,
+    );
+
+    UserMessage {
+        text: rebuilt_text,
+        local_images,
+        remote_image_urls,
+        text_elements: rebuilt_elements,
+        mention_bindings,
+    }
+}
+
 // When merging multiple queued drafts (e.g., after interrupt), each draft starts numbering
 // its attachments at [Image #1]. Reassign placeholder labels based on the attachment list so
 // the combined local_image_paths order matches the labels, even if placeholders were moved
@@ -899,6 +1046,10 @@ impl ChatWidget {
 
     fn realtime_audio_device_selection_enabled(&self) -> bool {
         self.realtime_conversation_enabled() && cfg!(feature = "voice-input")
+    }
+
+    fn scheduled_tasks_enabled(&self) -> bool {
+        !self.config.disable_cron
     }
 
     /// Synchronize the bottom-pane "task running" indicator with the current lifecycles.
@@ -3027,6 +3178,9 @@ impl ChatWidget {
             .set_audio_device_selection_enabled(widget.realtime_audio_device_selection_enabled());
         widget
             .bottom_pane
+            .set_scheduled_tasks_enabled(widget.scheduled_tasks_enabled());
+        widget
+            .bottom_pane
             .set_status_line_enabled(!widget.configured_status_line_items().is_empty());
         widget.bottom_pane.set_collaboration_modes_enabled(true);
         widget.sync_fast_command_enabled();
@@ -3208,6 +3362,9 @@ impl ChatWidget {
             .set_audio_device_selection_enabled(widget.realtime_audio_device_selection_enabled());
         widget
             .bottom_pane
+            .set_scheduled_tasks_enabled(widget.scheduled_tasks_enabled());
+        widget
+            .bottom_pane
             .set_status_line_enabled(!widget.configured_status_line_items().is_empty());
         widget.bottom_pane.set_collaboration_modes_enabled(true);
         widget.sync_fast_command_enabled();
@@ -3376,6 +3533,9 @@ impl ChatWidget {
         widget
             .bottom_pane
             .set_audio_device_selection_enabled(widget.realtime_audio_device_selection_enabled());
+        widget
+            .bottom_pane
+            .set_scheduled_tasks_enabled(widget.scheduled_tasks_enabled());
         widget
             .bottom_pane
             .set_status_line_enabled(!widget.configured_status_line_items().is_empty());
@@ -3721,6 +3881,16 @@ impl ChatWidget {
                     self.add_info_message("Plan mode unavailable right now.".to_string(), None);
                 }
             }
+            SlashCommand::Loop => {
+                if self.scheduled_tasks_enabled() {
+                    self.add_error_message(LOOP_USAGE.to_string());
+                } else {
+                    self.add_info_message(
+                        "Scheduled tasks are disabled.".to_string(),
+                        Some("Set disable_cron = false in config.toml to use /loop.".to_string()),
+                    );
+                }
+            }
             SlashCommand::Collab => {
                 if !self.collaboration_modes_enabled() {
                     self.add_info_message(
@@ -4027,6 +4197,54 @@ impl ChatWidget {
                     text_elements: prepared_elements,
                     mention_bindings: self.bottom_pane.take_recent_submission_mention_bindings(),
                 };
+                if self.is_session_configured() {
+                    self.reasoning_buffer.clear();
+                    self.full_reasoning_buffer.clear();
+                    self.set_status_header(String::from("Working"));
+                    self.submit_user_message(user_message);
+                } else {
+                    self.queue_user_message(user_message);
+                }
+            }
+            SlashCommand::Loop if !trimmed.is_empty() => {
+                if !self.scheduled_tasks_enabled() {
+                    self.add_info_message(
+                        "Scheduled tasks are disabled.".to_string(),
+                        Some("Set disable_cron = false in config.toml to use /loop.".to_string()),
+                    );
+                    self.bottom_pane.drain_pending_submission_state();
+                    return;
+                }
+                let Some((prepared_args, prepared_elements)) =
+                    self.bottom_pane.prepare_inline_args_submission(true)
+                else {
+                    return;
+                };
+                let parsed = match parse_loop_args(&prepared_args) {
+                    Ok(parsed) => parsed,
+                    Err(message) => {
+                        self.add_error_message(message.to_string());
+                        self.bottom_pane.drain_pending_submission_state();
+                        return;
+                    }
+                };
+                let Some(prompt) = prepared_args.get(parsed.prompt_range.clone()) else {
+                    self.add_error_message(LOOP_USAGE.to_string());
+                    self.bottom_pane.drain_pending_submission_state();
+                    return;
+                };
+                let local_images = self
+                    .bottom_pane
+                    .take_recent_submission_images_with_placeholders();
+                let remote_image_urls = self.take_remote_image_urls();
+                let prompt_message = UserMessage {
+                    text: prompt.to_string(),
+                    local_images,
+                    remote_image_urls,
+                    text_elements: slice_text_elements(prepared_elements, parsed.prompt_range),
+                    mention_bindings: self.bottom_pane.take_recent_submission_mention_bindings(),
+                };
+                let user_message = build_loop_user_message(&parsed.interval, prompt_message);
                 if self.is_session_configured() {
                     self.reasoning_buffer.clear();
                     self.full_reasoning_buffer.clear();
@@ -6954,6 +7172,8 @@ impl ChatWidget {
                 .set_realtime_conversation_enabled(realtime_conversation_enabled);
             self.bottom_pane
                 .set_audio_device_selection_enabled(self.realtime_audio_device_selection_enabled());
+            self.bottom_pane
+                .set_scheduled_tasks_enabled(self.scheduled_tasks_enabled());
             if !realtime_conversation_enabled && self.realtime_conversation.is_live() {
                 self.request_realtime_conversation_close(Some(
                     "Realtime voice mode was closed because the feature was disabled.".to_string(),

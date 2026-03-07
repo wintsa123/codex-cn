@@ -17,6 +17,7 @@ pub(crate) struct BuiltinCommandFlags {
     pub(crate) realtime_conversation_enabled: bool,
     pub(crate) audio_device_selection_enabled: bool,
     pub(crate) allow_elevate_sandbox: bool,
+    pub(crate) scheduled_tasks_enabled: bool,
 }
 
 /// Return the built-ins that should be visible/usable for the current input.
@@ -24,6 +25,7 @@ pub(crate) fn builtins_for_input(flags: BuiltinCommandFlags) -> Vec<(&'static st
     built_in_slash_commands()
         .into_iter()
         .filter(|(_, cmd)| flags.allow_elevate_sandbox || *cmd != SlashCommand::ElevateSandbox)
+        .filter(|(_, cmd)| flags.scheduled_tasks_enabled || *cmd != SlashCommand::Loop)
         .filter(|(_, cmd)| {
             flags.collaboration_modes_enabled
                 || !matches!(*cmd, SlashCommand::Collab | SlashCommand::Plan)
@@ -65,6 +67,7 @@ mod tests {
             realtime_conversation_enabled: true,
             audio_device_selection_enabled: true,
             allow_elevate_sandbox: true,
+            scheduled_tasks_enabled: true,
         }
     }
 
@@ -109,5 +112,12 @@ mod tests {
         let mut flags = all_enabled_flags();
         flags.audio_device_selection_enabled = false;
         assert_eq!(find_builtin_command("settings", flags), None);
+    }
+
+    #[test]
+    fn loop_command_is_hidden_when_scheduled_tasks_are_disabled() {
+        let mut flags = all_enabled_flags();
+        flags.scheduled_tasks_enabled = false;
+        assert_eq!(find_builtin_command("loop", flags), None);
     }
 }

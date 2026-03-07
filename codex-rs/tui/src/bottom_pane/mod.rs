@@ -309,6 +309,11 @@ impl BottomPane {
         self.request_redraw();
     }
 
+    pub fn set_scheduled_tasks_enabled(&mut self, enabled: bool) {
+        self.composer.set_scheduled_tasks_enabled(enabled);
+        self.request_redraw();
+    }
+
     pub fn set_voice_transcription_enabled(&mut self, enabled: bool) {
         self.composer.set_voice_transcription_enabled(enabled);
         self.request_redraw();

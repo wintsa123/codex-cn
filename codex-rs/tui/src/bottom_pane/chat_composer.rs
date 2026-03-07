@@ -404,6 +404,7 @@ pub(crate) struct ChatComposer {
     realtime_conversation_enabled: bool,
     audio_device_selection_enabled: bool,
     windows_degraded_sandbox_active: bool,
+    scheduled_tasks_enabled: bool,
     status_line_value: Option<Line<'static>>,
     status_line_enabled: bool,
 }
@@ -440,6 +441,7 @@ impl ChatComposer {
             realtime_conversation_enabled: self.realtime_conversation_enabled,
             audio_device_selection_enabled: self.audio_device_selection_enabled,
             allow_elevate_sandbox: self.windows_degraded_sandbox_active,
+            scheduled_tasks_enabled: self.scheduled_tasks_enabled,
         }
     }
 
@@ -523,6 +525,7 @@ impl ChatComposer {
             realtime_conversation_enabled: false,
             audio_device_selection_enabled: false,
             windows_degraded_sandbox_active: false,
+            scheduled_tasks_enabled: true,
             status_line_value: None,
             status_line_enabled: false,
         };
@@ -605,6 +608,10 @@ impl ChatComposer {
 
     pub fn set_audio_device_selection_enabled(&mut self, enabled: bool) {
         self.audio_device_selection_enabled = enabled;
+    }
+
+    pub fn set_scheduled_tasks_enabled(&mut self, enabled: bool) {
+        self.scheduled_tasks_enabled = enabled;
     }
 
     /// Compatibility shim for tests that still toggle the removed steer mode flag.
@@ -3452,6 +3459,7 @@ impl ChatComposer {
                             realtime_conversation_enabled,
                             audio_device_selection_enabled,
                             windows_degraded_sandbox_active: self.windows_degraded_sandbox_active,
+                            scheduled_tasks_enabled: self.scheduled_tasks_enabled,
                         },
                     );
                     command_popup.on_composer_text_change(first_line.to_string());

@@ -50,6 +50,7 @@ pub struct ConfigProfile {
     pub tools_web_search: Option<bool>,
     pub tools_view_image: Option<bool>,
     pub web_search: Option<WebSearchMode>,
+    pub disable_cron: Option<bool>,
     pub analytics: Option<crate::config::types::AnalyticsConfigToml>,
     #[serde(default)]
     pub windows: Option<WindowsToml>,

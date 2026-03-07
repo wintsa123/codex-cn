@@ -5109,6 +5109,168 @@ async fn plan_slash_command_with_args_submits_prompt_in_plan_mode() {
     assert_eq!(chat.active_collaboration_mode_kind(), ModeKind::Plan);
 }
 
+#[test]
+fn parse_loop_args_detects_explicit_interval() {
+    let input = "15m check build status";
+    let parsed = parse_loop_args(input).expect("loop args");
+
+    assert_eq!(parsed.interval, "15m");
+    assert_eq!(&input[parsed.prompt_range], "check build status");
+}
+
+#[test]
+fn parse_loop_args_detects_trailing_every_clause() {
+    let input = "check build status every 2 hours";
+    let parsed = parse_loop_args(input).expect("loop args");
+
+    assert_eq!(parsed.interval, "2h");
+    assert_eq!(&input[parsed.prompt_range], "check build status");
+}
+
+#[test]
+fn parse_loop_args_accepts_seconds_unit() {
+    let input = "30s check alerts";
+    let parsed = parse_loop_args(input).expect("loop args");
+
+    assert_eq!(parsed.interval, "30s");
+    assert_eq!(&input[parsed.prompt_range], "check alerts");
+}
+
+#[test]
+fn parse_loop_args_defaults_when_no_interval_is_present() {
+    let input = "check build status";
+    let parsed = parse_loop_args(input).expect("loop args");
+
+    assert_eq!(parsed.interval, "10m");
+    assert_eq!(&input[parsed.prompt_range], input);
+}
+
+#[test]
+fn build_loop_user_message_rebases_text_elements() {
+    let placeholder = "$build";
+    let prompt = format!("{placeholder} check build status");
+    let message = UserMessage {
+        text: prompt.clone(),
+        local_images: Vec::new(),
+        remote_image_urls: Vec::new(),
+        text_elements: vec![TextElement::new(
+            (0..placeholder.len()).into(),
+            Some(placeholder.to_string()),
+        )],
+        mention_bindings: vec![MentionBinding {
+            mention: "build".to_string(),
+            path: "skill:///tmp/build/SKILL.md".to_string(),
+        }],
+    };
+
+    let loop_message = build_loop_user_message("15m", message);
+    let prefix_len = loop_message.text.len() - prompt.len();
+
+    assert_eq!(
+        loop_message.text_elements,
+        vec![TextElement::new(
+            (prefix_len..prefix_len + placeholder.len()).into(),
+            Some(placeholder.to_string()),
+        )]
+    );
+    assert_eq!(
+        loop_message.mention_bindings,
+        vec![MentionBinding {
+            mention: "build".to_string(),
+            path: "skill:///tmp/build/SKILL.md".to_string(),
+        }]
+    );
+    assert!(loop_message.text.contains("15m"));
+    assert!(
+        loop_message
+            .text
+            .contains("round it up to the nearest minute")
+    );
+    assert!(
+        loop_message
+            .text
+            .contains("mention the final cadence you picked")
+    );
+    assert!(
+        loop_message
+            .text
+            .contains("reply briefly with the scheduled cadence")
+    );
+    assert!(loop_message.text.ends_with(&prompt));
+}
+
+#[tokio::test]
+async fn loop_slash_command_disabled_in_config_shows_guidance() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(None).await;
+    chat.config.disable_cron = true;
+    chat.bottom_pane.set_scheduled_tasks_enabled(false);
+
+    chat.dispatch_command_with_args(
+        SlashCommand::Loop,
+        "10m check build status".to_string(),
+        Vec::new(),
+    );
+
+    let cells = drain_insert_history(&mut rx);
+    assert_eq!(cells.len(), 1, "expected one info message");
+    let rendered = lines_to_single_string(&cells[0]);
+    assert!(
+        rendered.contains("Scheduled tasks are disabled."),
+        "info message should explain why /loop is unavailable: {rendered:?}"
+    );
+    assert!(
+        rendered.contains("Set disable_cron = false in config.toml to use /loop."),
+        "info message should explain how to re-enable /loop: {rendered:?}"
+    );
+}
+#[tokio::test]
+async fn loop_slash_command_with_default_interval_submits_scheduled_task_prompt() {
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(None).await;
+
+    let configured = codex_protocol::protocol::SessionConfiguredEvent {
+        session_id: ThreadId::new(),
+        forked_from_id: None,
+        thread_name: None,
+        model: "test-model".to_string(),
+        model_provider_id: "test-provider".to_string(),
+        service_tier: None,
+        approval_policy: AskForApproval::Never,
+        sandbox_policy: SandboxPolicy::new_read_only_policy(),
+        cwd: PathBuf::from("/home/user/project"),
+        reasoning_effort: Some(ReasoningEffortConfig::default()),
+        history_log_id: 0,
+        history_entry_count: 0,
+        initial_messages: None,
+        network_proxy: None,
+        rollout_path: None,
+    };
+    chat.handle_codex_event(Event {
+        id: "configured".into(),
+        msg: EventMsg::SessionConfigured(configured),
+    });
+
+    chat.bottom_pane.set_composer_text(
+        "/loop check build status".to_string(),
+        Vec::new(),
+        Vec::new(),
+    );
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+    let items = match next_submit_op(&mut op_rx) {
+        Op::UserTurn { items, .. } => items,
+        other => panic!("expected Op::UserTurn, got {other:?}"),
+    };
+    assert_eq!(items.len(), 1);
+    let expected = build_loop_user_message("10m", UserMessage::from("check build status"));
+    assert_eq!(
+        items[0],
+        UserInput::Text {
+            text: expected.text,
+            text_elements: expected.text_elements,
+        }
+    );
+}
+
 #[tokio::test]
 async fn collaboration_modes_defaults_to_code_on_startup() {
     let codex_home = tempdir().expect("tempdir");

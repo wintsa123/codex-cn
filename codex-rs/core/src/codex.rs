@@ -743,6 +743,7 @@ impl TurnContext {
             features: &features,
             web_search_mode: self.tools_config.web_search_mode,
             session_source: self.session_source.clone(),
+            scheduled_tasks_enabled: !config.disable_cron,
         })
         .with_allow_login_shell(self.tools_config.allow_login_shell)
         .with_agent_roles(config.agent_roles.clone());
@@ -1219,6 +1220,7 @@ impl Session {
             features: &per_turn_config.features,
             web_search_mode: Some(per_turn_config.web_search_mode.value()),
             session_source: session_source.clone(),
+            scheduled_tasks_enabled: !per_turn_config.disable_cron,
         })
         .with_allow_login_shell(per_turn_config.permissions.allow_login_shell)
         .with_agent_roles(per_turn_config.agent_roles.clone());
@@ -1669,6 +1671,8 @@ impl Session {
             network_proxy,
             network_approval: Arc::clone(&network_approval),
             state_db: state_db_ctx.clone(),
+            scheduled_tasks: Default::default(),
+            scheduled_tasks_cancellation: CancellationToken::new(),
             model_client,
         };
         let js_repl = Arc::new(JsReplHandle::with_node_path(
@@ -1724,6 +1728,7 @@ impl Session {
         // Start the watcher after SessionConfigured so it cannot emit earlier events.
         sess.start_hook_async_results_listener(hook_async_results_rx);
         sess.start_file_watcher_listener();
+        sess.start_scheduled_tasks_loop();
         // Construct sandbox_state before MCP startup so it can be sent to each
         // MCP server immediately after it becomes ready (avoiding blocking).
         let sandbox_state = SandboxState {
@@ -2719,6 +2724,61 @@ impl Session {
             Arc::clone(&task.turn_context),
             task.cancellation_token.child_token(),
         ))
+    }
+
+    fn start_scheduled_tasks_loop(self: &Arc<Self>) {
+        let session = Arc::clone(self);
+        tokio::spawn(async move {
+            session.scheduled_tasks_loop().await;
+        });
+    }
+
+    async fn scheduled_tasks_loop(self: Arc<Self>) {
+        let config = self.get_config().await;
+        if !crate::scheduled_tasks::cron_tools_enabled(&config) {
+            return;
+        }
+
+        let cancellation = self.services.scheduled_tasks_cancellation.clone();
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+        loop {
+            tokio::select! {
+                _ = cancellation.cancelled() => break,
+                _ = interval.tick() => {
+                    self.maybe_run_due_scheduled_task().await;
+                }
+            }
+        }
+    }
+
+    async fn maybe_run_due_scheduled_task(self: &Arc<Self>) {
+        if self.active_turn.lock().await.is_some() {
+            return;
+        }
+
+        let Some(due_task) = self
+            .services
+            .scheduled_tasks
+            .take_due_task(Utc::now())
+            .await
+        else {
+            return;
+        };
+
+        handlers::user_input_or_turn(
+            self,
+            format!("scheduled-task-{}", due_task.id),
+            Op::UserInput {
+                items: vec![UserInput::Text {
+                    text: due_task.prompt,
+                    text_elements: Vec::new(),
+                }],
+                final_output_json_schema: None,
+            },
+        )
+        .await;
     }
 
     pub(crate) async fn record_execpolicy_amendment_message(
@@ -5116,6 +5176,7 @@ mod handlers {
 
         // Gracefully flush and shutdown rollout recorder on session end so tests
         // that inspect the rollout file do not race with the background writer.
+        sess.services.scheduled_tasks_cancellation.cancel();
         let recorder_opt = {
             let mut guard = sess.services.rollout.lock().await;
             guard.take()
@@ -5213,6 +5274,7 @@ async fn spawn_review_thread(
         features: &review_features,
         web_search_mode: Some(review_web_search_mode),
         session_source: parent_turn_context.session_source.clone(),
+        scheduled_tasks_enabled: !config.disable_cron,
     })
     .with_allow_login_shell(config.permissions.allow_login_shell)
     .with_agent_roles(config.agent_roles.clone());
@@ -9043,6 +9105,8 @@ mod tests {
             network_proxy: None,
             network_approval: Arc::clone(&network_approval),
             state_db: None,
+            scheduled_tasks: Default::default(),
+            scheduled_tasks_cancellation: CancellationToken::new(),
             model_client: ModelClient::new(
                 Some(auth_manager.clone()),
                 conversation_id,
@@ -9293,6 +9357,8 @@ mod tests {
             network_proxy: None,
             network_approval: Arc::clone(&network_approval),
             state_db: None,
+            scheduled_tasks: Default::default(),
+            scheduled_tasks_cancellation: CancellationToken::new(),
             model_client: ModelClient::new(
                 Some(Arc::clone(&auth_manager)),
                 conversation_id,

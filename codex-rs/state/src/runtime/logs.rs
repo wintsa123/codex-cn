@@ -363,7 +363,7 @@ ORDER BY ts ASC, ts_nanos ASC, id ASC
         .bind(thread_id)
         .bind(thread_id)
         .bind(max_bytes)
-        .fetch_all(self.pool.as_ref())
+        .fetch_all(self.logs_pool.as_ref())
         .await?;
 
         Ok(lines.concat().into_bytes())

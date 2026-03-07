@@ -115,6 +115,9 @@ jobs:
           - runner: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             profile: release
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+            profile: release
 
     steps:
       - uses: actions/checkout@v6

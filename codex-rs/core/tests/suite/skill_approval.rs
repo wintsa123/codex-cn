@@ -16,8 +16,8 @@ use core_test_support::responses::mount_function_call_agent_response;
 use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::TestCodex;
+use core_test_support::wait_for_event;
 use core_test_support::wait_for_event_match;
-use core_test_support::wait_for_event_with_timeout;
 use core_test_support::zsh_fork::build_zsh_fork_test;
 use core_test_support::zsh_fork::restrictive_workspace_write_policy;
 use core_test_support::zsh_fork::zsh_fork_runtime;
@@ -139,11 +139,9 @@ async fn wait_for_exec_approval_request(test: &TestCodex) -> Option<ExecApproval
 }
 
 async fn wait_for_turn_complete(test: &TestCodex) {
-    wait_for_event_with_timeout(
-        test.codex.as_ref(),
-        |event| matches!(event, EventMsg::TurnComplete(_)),
-        std::time::Duration::from_secs(30),
-    )
+    wait_for_event(test.codex.as_ref(), |event| {
+        matches!(event, EventMsg::TurnComplete(_))
+    })
     .await;
 }
 
@@ -334,8 +332,6 @@ async fn shell_zsh_fork_skill_without_permissions_inherits_turn_sandbox() -> Res
         "expected permissionless skill script to skip exec approval"
     );
 
-    wait_for_turn_complete(&test).await;
-
     let first_output = first_mocks
         .completion
         .single_request()
@@ -462,8 +458,6 @@ async fn shell_zsh_fork_skill_with_empty_permissions_inherits_turn_sandbox() -> 
         approval.is_none(),
         "expected empty-permissions skill to inherit the full-access turn sandbox without prompting"
     );
-
-    wait_for_turn_complete(&test).await;
 
     let first_output = first_mocks
         .completion

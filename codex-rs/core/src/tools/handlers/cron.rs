@@ -253,7 +253,7 @@ mod tests {
                 Arc::clone(&session),
                 Arc::clone(&turn),
                 CRON_DELETE_TOOL_NAME,
-                &format!(r#"{{"id":"{}"}}"#, created_id),
+                &format!(r#"{{"id":"{created_id}"}}"#),
             ))
             .await
             .expect("delete output");

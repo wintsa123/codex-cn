@@ -315,7 +315,7 @@ async fn plugin_apps_expose_tools_after_canonical_name_mention() -> Result<()> {
         .with_auth(CodexAuth::from_api_key("Test API Key"))
         .with_config(move |config| {
             let _ = config.features.enable(Feature::Apps);
-            config.features.disable(Feature::AppsMcpGateway);
+            let _ = config.features.disable(Feature::AppsMcpGateway);
             config.chatgpt_base_url = apps_server.chatgpt_base_url;
         });
     let codex = builder

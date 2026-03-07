@@ -794,6 +794,7 @@ mod tests {
             network: None,
             model: "gpt-5.2".to_string(),
             personality: None,
+            trace_id: None,
             collaboration_mode: Some(CollaborationMode {
                 mode: ModeKind::Default,
                 settings: Settings {

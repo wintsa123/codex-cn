@@ -9190,7 +9190,7 @@ mod tests {
     async fn session_new_fails_when_zsh_fork_enabled_without_zsh_path() {
         let codex_home = tempfile::tempdir().expect("create temp dir");
         let mut config = build_test_config(codex_home.path()).await;
-        config.features.enable(Feature::ShellZshFork);
+        let _ = config.features.enable(Feature::ShellZshFork);
         config.zsh_path = None;
         let config = Arc::new(config);
 

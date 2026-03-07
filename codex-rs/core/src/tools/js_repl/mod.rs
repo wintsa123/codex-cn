@@ -1987,7 +1987,7 @@ mod tests {
     #[tokio::test]
     async fn emitted_image_content_item_uses_turn_original_detail_when_enabled() {
         let (_session, mut turn) = make_session_and_context().await;
-        Arc::make_mut(&mut turn.config)
+        let _ = Arc::make_mut(&mut turn.config)
             .features
             .enable(Feature::ImageDetailOriginal);
         turn.model_info.supports_image_detail_original = true;

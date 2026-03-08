@@ -830,6 +830,7 @@ async fn conversation_startup_context_falls_back_to_workspace_map() -> Result<()
     let test = builder.build_with_websocket_server(&server).await?;
     fs::create_dir_all(test.workspace_path("codex-rs/core"))?;
     fs::write(test.workspace_path("notes.txt"), "workspace marker")?;
+    assert!(server.wait_for_handshakes(1, Duration::from_secs(2)).await);
 
     test.codex
         .submit(Op::RealtimeConversationStart(ConversationStartParams {

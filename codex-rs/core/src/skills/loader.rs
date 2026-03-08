@@ -454,6 +454,9 @@ fn discover_skills_under_root(root: &Path, scope: SkillScope, outcome: &mut Skil
             }
 
             if file_type.is_dir() {
+                if scope != SkillScope::System && file_name == ".system" {
+                    continue;
+                }
                 let Ok(resolved_dir) = canonicalize_path(&path) else {
                     continue;
                 };
@@ -1937,6 +1940,30 @@ permissions:
             outcome.errors
         );
         assert_eq!(outcome.skills.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn user_scope_skips_embedded_system_cache_subdir() {
+        let codex_home = tempfile::tempdir().expect("tempdir");
+        let user_root = codex_home.path().join("skills");
+        let system_root = user_root.join(".system");
+        let skill_path = write_skill_at(&system_root, "demo", "system-skill", "from system");
+
+        let outcome = load_skills_from_roots([SkillRoot {
+            path: user_root,
+            scope: SkillScope::User,
+        }]);
+
+        assert!(
+            outcome.errors.is_empty(),
+            "unexpected errors: {:?}",
+            outcome.errors
+        );
+        assert!(
+            outcome.skills.is_empty(),
+            "expected user scope to skip {skill_path:?}, got {:?}",
+            outcome.skills
+        );
     }
 
     #[tokio::test]

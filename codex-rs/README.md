@@ -17,6 +17,7 @@ You can also install via Homebrew (`brew install --cask codex`) or download a pl
 
 - First run with Codex? Start with [`docs/getting-started.md`](../docs/getting-started.md) (links to the walkthrough for prompts, keyboard shortcuts, and session management).
 - Want deeper control? See [`docs/config.md`](../docs/config.md) and [`docs/install.md`](../docs/install.md).
+- Running GitHub webhook mode? Start with [`docs/github-webhook.md`](./docs/github-webhook.md).
 
 ## What's new in the Rust CLI
 

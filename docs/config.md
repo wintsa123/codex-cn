@@ -109,6 +109,45 @@ profile = "scheduled"
 disable_cron = false
 ```
 
+## GitHub webhook
+
+`codex github` can load non-sensitive webhook defaults from the top-level `[github_webhook]` table in `~/.codex/config.toml`.
+Secrets stay in environment variables; the config only stores env var names and runtime defaults.
+
+Example:
+
+```toml
+[github_webhook]
+enabled = true
+listen = "127.0.0.1:8787"
+webhook_secret_env = "GITHUB_WEBHOOK_SECRET"
+github_token_env = "GITHUB_TOKEN"
+github_app_id_env = "GITHUB_APP_ID"
+github_app_private_key_env = "GITHUB_APP_PRIVATE_KEY"
+auth_mode = "auto"
+min_permission = "read"
+allow_repos = ["owner/repo"]
+command_prefix = "/codex"
+delivery_ttl_days = 7
+repo_ttl_days = 0
+sources = ["repo", "organization", "github-app"]
+
+[github_webhook.events]
+issue_comment = true
+issues = true
+pull_request = true
+pull_request_review = true
+pull_request_review_comment = true
+push = true
+```
+
+Notes:
+
+- CLI flags still override config defaults.
+- If `[github_webhook]` is absent, `codex github` keeps the legacy event surface (`issue_comment`, `pull_request_review`, `pull_request_review_comment`).
+- `issues`, `pull_request`, and `push` only trigger when the issue body, PR body, or head commit message explicitly starts with the configured command prefix.
+- `auth_mode = "auto"` prefers GitHub App installation tokens when available and falls back to `GITHUB_TOKEN`.
+
 ## JSON Schema
 
 The generated JSON Schema for `config.toml` lives at `codex-rs/core/config.schema.json`.

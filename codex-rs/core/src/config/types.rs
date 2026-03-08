@@ -13,6 +13,7 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::fmt;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 use wildmatch::WildMatchPattern;
@@ -41,6 +42,53 @@ pub enum WindowsSandboxModeToml {
 #[schemars(deny_unknown_fields)]
 pub struct WindowsToml {
     pub sandbox: Option<WindowsSandboxModeToml>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum GithubWebhookAuthModeToml {
+    #[default]
+    Auto,
+    Token,
+    GithubApp,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum GithubWebhookSourceToml {
+    Repo,
+    Organization,
+    GithubApp,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct GithubWebhookEventsToml {
+    pub issue_comment: Option<bool>,
+    pub issues: Option<bool>,
+    pub pull_request: Option<bool>,
+    pub pull_request_review: Option<bool>,
+    pub pull_request_review_comment: Option<bool>,
+    pub push: Option<bool>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct GithubWebhookToml {
+    pub enabled: Option<bool>,
+    pub listen: Option<SocketAddr>,
+    pub webhook_secret_env: Option<String>,
+    pub github_token_env: Option<String>,
+    pub github_app_id_env: Option<String>,
+    pub github_app_private_key_env: Option<String>,
+    pub auth_mode: Option<GithubWebhookAuthModeToml>,
+    pub min_permission: Option<String>,
+    pub allow_repos: Option<Vec<String>>,
+    pub command_prefix: Option<String>,
+    pub delivery_ttl_days: Option<u64>,
+    pub repo_ttl_days: Option<u64>,
+    pub sources: Option<Vec<GithubWebhookSourceToml>>,
+    pub events: Option<GithubWebhookEventsToml>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

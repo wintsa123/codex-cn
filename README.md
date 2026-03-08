@@ -47,6 +47,7 @@ codex serve
 
 - [**Contributing**](./docs/contributing.md)
 - [**Installing & building**](./docs/install.md)
+- [**GitHub webhook mode**](./codex-rs/docs/github-webhook.md)
 - [**Open source fund**](./docs/open-source-fund.md)
 
 ## Acknowledgements

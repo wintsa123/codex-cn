@@ -3,6 +3,7 @@ use crate::config::edit::ConfigEdit;
 use crate::config::edit::ConfigEditsBuilder;
 use crate::config::types::AppsConfigToml;
 use crate::config::types::DEFAULT_OTEL_ENVIRONMENT;
+use crate::config::types::GithubWebhookToml;
 use crate::config::types::History;
 use crate::config::types::McpServerConfig;
 use crate::config::types::McpServerDisabledReason;
@@ -1148,6 +1149,9 @@ pub struct ConfigToml {
     /// Named profiles to facilitate switching between different configurations.
     #[serde(default)]
     pub profiles: HashMap<String, ConfigProfile>,
+
+    /// Settings for the `codex github` webhook server.
+    pub github_webhook: Option<GithubWebhookToml>,
 
     /// Settings that govern if and what will be written to `~/.codex/history.jsonl`.
     #[serde(default)]
@@ -6290,10 +6294,95 @@ speaker = "Desk Speakers"
         );
         Ok(())
     }
+
+    #[test]
+    fn github_webhook_loads_from_config_toml() {
+        let cfg: ConfigToml = toml::from_str(
+            r#"
+[github_webhook]
+enabled = true
+listen = "127.0.0.1:9898"
+webhook_secret_env = "MY_WEBHOOK_SECRET"
+github_token_env = "MY_GITHUB_TOKEN"
+github_app_id_env = "MY_GITHUB_APP_ID"
+github_app_private_key_env = "MY_GITHUB_APP_PRIVATE_KEY"
+auth_mode = "github-app"
+min_permission = "read"
+allow_repos = ["o/r"]
+command_prefix = "/bot"
+delivery_ttl_days = 5
+repo_ttl_days = 9
+sources = ["repo", "organization", "github-app"]
+
+[github_webhook.events]
+issue_comment = true
+issues = true
+pull_request = true
+pull_request_review = false
+pull_request_review_comment = true
+push = false
+"#,
+        )
+        .expect("TOML deserialization should succeed");
+
+        let github_webhook = cfg
+            .github_webhook
+            .expect("github webhook config should be present");
+        assert_eq!(github_webhook.enabled, Some(true));
+        assert_eq!(
+            github_webhook.listen.map(|addr| addr.to_string()),
+            Some("127.0.0.1:9898".to_string())
+        );
+        assert_eq!(
+            github_webhook.webhook_secret_env.as_deref(),
+            Some("MY_WEBHOOK_SECRET")
+        );
+        assert_eq!(
+            github_webhook.github_token_env.as_deref(),
+            Some("MY_GITHUB_TOKEN")
+        );
+        assert_eq!(
+            github_webhook.github_app_id_env.as_deref(),
+            Some("MY_GITHUB_APP_ID")
+        );
+        assert_eq!(
+            github_webhook.github_app_private_key_env.as_deref(),
+            Some("MY_GITHUB_APP_PRIVATE_KEY")
+        );
+        assert_eq!(
+            github_webhook.auth_mode,
+            Some(crate::config::types::GithubWebhookAuthModeToml::GithubApp)
+        );
+        assert_eq!(github_webhook.min_permission.as_deref(), Some("read"));
+        assert_eq!(github_webhook.allow_repos, Some(vec!["o/r".to_string()]));
+        assert_eq!(github_webhook.command_prefix.as_deref(), Some("/bot"));
+        assert_eq!(github_webhook.delivery_ttl_days, Some(5));
+        assert_eq!(github_webhook.repo_ttl_days, Some(9));
+        assert_eq!(
+            github_webhook.sources,
+            Some(vec![
+                crate::config::types::GithubWebhookSourceToml::Repo,
+                crate::config::types::GithubWebhookSourceToml::Organization,
+                crate::config::types::GithubWebhookSourceToml::GithubApp,
+            ])
+        );
+        assert_eq!(
+            github_webhook.events,
+            Some(crate::config::types::GithubWebhookEventsToml {
+                issue_comment: Some(true),
+                issues: Some(true),
+                pull_request: Some(true),
+                pull_request_review: Some(false),
+                pull_request_review_comment: Some(true),
+                push: Some(false),
+            })
+        );
+    }
 }
 
 #[cfg(test)]
 mod notifications_tests {
+
     use crate::config::types::NotificationMethod;
     use crate::config::types::Notifications;
     use assert_matches::assert_matches;

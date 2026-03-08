@@ -676,6 +676,28 @@ mod tests {
 
     #[test]
     fn embedded_web_assets_include_session_ux_features() {
+        fn js_assets_contain_marker(dir: &include_dir::Dir<'_>, marker: &str) -> bool {
+            for entry in dir.entries() {
+                match entry {
+                    include_dir::DirEntry::Dir(subdir) => {
+                        if js_assets_contain_marker(subdir, marker) {
+                            return true;
+                        }
+                    }
+                    include_dir::DirEntry::File(file) => {
+                        if file.path().extension().and_then(|ext| ext.to_str()) == Some("js")
+                            && std::str::from_utf8(file.contents())
+                                .is_ok_and(|contents| contents.contains(marker))
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            false
+        }
+
         let index = WEB_ASSETS
             .get_file("index.html")
             .expect("embedded serve assets include index.html");
@@ -691,17 +713,16 @@ mod tests {
             .expect("index.html script src attribute is quoted");
         let bundle_path = &index_html[path_start..path_start + path_end];
 
-        let bundle = WEB_ASSETS
+        WEB_ASSETS
             .get_file(bundle_path)
             .unwrap_or_else(|| panic!("embedded serve assets include {bundle_path}"));
-        let bundle_js = std::str::from_utf8(bundle.contents()).expect("main JS bundle is utf-8");
 
         assert!(
-            bundle_js.contains("reasoningEffort"),
+            js_assets_contain_marker(&WEB_ASSETS, "reasoningEffort"),
             "embedded Web UI bundle missing reasoningEffort (run `just write-serve-web-assets`)"
         );
         assert!(
-            bundle_js.contains("spawn_team"),
+            js_assets_contain_marker(&WEB_ASSETS, "spawn_team"),
             "embedded Web UI bundle missing agent teams tool support (run `just write-serve-web-assets`)"
         );
     }

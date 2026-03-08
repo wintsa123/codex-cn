@@ -1,0 +1,14 @@
+{
+  "active_session": "",
+  "stop_block_count": 0,
+  "last_stop_completed": 0,
+  "session_task_count": 0,
+  "session_task_count_session": "",
+  "reflect_iteration": 0,
+  "review_pending": false,
+  "external_validation_required": false,
+  "run_outcome": "ready",
+  "run_outcome_reason": "state not evaluated yet",
+  "last_reconcile_at": null,
+  "last_checkpoint_at": null
+}

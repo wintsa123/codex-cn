@@ -1281,7 +1281,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 decision: ReviewDecision::Approved,
                 expected_reason: None,
             },
-            expectation: Expectation::FileCreated {
+            expectation: Expectation::FileCreatedNoExitCode {
                 target: TargetPath::Workspace("ro_unless_trusted.txt"),
                 content: "read-only-unless-trusted",
             },

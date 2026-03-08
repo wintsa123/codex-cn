@@ -12,19 +12,32 @@ use axum::routing::post;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use codex_core::config::find_codex_home;
+use codex_core::config::load_config_as_toml_with_cli_overrides;
+use codex_core::config::types::GithubWebhookAuthModeToml;
+use codex_core::config::types::GithubWebhookEventsToml;
+use codex_core::config::types::GithubWebhookSourceToml;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_cli::CliConfigOverrides;
 use hmac::Hmac;
 use hmac::Mac;
+use jsonwebtoken::Algorithm;
+use jsonwebtoken::EncodingKey;
+use jsonwebtoken::Header as JwtHeader;
 use reqwest::header::ACCEPT;
 use reqwest::header::AUTHORIZATION;
 use reqwest::header::HeaderMap as ReqwestHeaderMap;
 use reqwest::header::HeaderName;
 use reqwest::header::HeaderValue as ReqwestHeaderValue;
 use reqwest::header::USER_AGENT;
+use serde::Serialize;
 use serde_json::Value;
 use sha2::Sha256;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::Hash;
+use std::hash::Hasher;
+use std::net::SocketAddr;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -37,9 +50,12 @@ use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tokio::sync::Semaphore;
 
+#[cfg(test)]
 const DEFAULT_LISTEN_ADDR: &str = "127.0.0.1:8787";
 const DEFAULT_WEBHOOK_SECRET_ENV: &str = "GITHUB_WEBHOOK_SECRET";
 const DEFAULT_GITHUB_TOKEN_ENV: &str = "GITHUB_TOKEN";
+const DEFAULT_GITHUB_APP_ID_ENV: &str = "GITHUB_APP_ID";
+const DEFAULT_GITHUB_APP_PRIVATE_KEY_ENV: &str = "GITHUB_APP_PRIVATE_KEY";
 const DEFAULT_COMMAND_PREFIX: &str = "/codex";
 const GITHUB_API_BASE_URL: &str = "https://api.github.com";
 const GITHUB_API_VERSION: &str = "2022-11-28";
@@ -56,6 +72,10 @@ const GITHUB_API_TIMEOUT: Duration = Duration::from_secs(20);
 const GC_INTERVAL: Duration = Duration::from_secs(60 * 60);
 const GIT_COMMAND_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const CODEX_EXEC_TIMEOUT: Duration = Duration::from_secs(20 * 60);
+const GITHUB_APP_JWT_BACKDATE_SECS: u64 = 60;
+const GITHUB_APP_JWT_LIFETIME_SECS: u64 = 9 * 60;
+const ACKNOWLEDGMENT_MESSAGE: &str = "codex github received this request and is working on it.";
+const ACKNOWLEDGMENT_REACTION: &str = "eyes";
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -139,24 +159,168 @@ fn permission_rank(permission: &str) -> Option<u8> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, clap::ValueEnum)]
+#[value(rename_all = "kebab-case")]
+enum GithubAuthMode {
+    Auto,
+    Token,
+    GithubApp,
+}
+
+impl From<GithubAuthMode> for GithubWebhookAuthModeToml {
+    fn from(value: GithubAuthMode) -> Self {
+        match value {
+            GithubAuthMode::Auto => Self::Auto,
+            GithubAuthMode::Token => Self::Token,
+            GithubAuthMode::GithubApp => Self::GithubApp,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum WebhookSource {
+    Repo,
+    Organization,
+    GithubApp,
+}
+
+impl WebhookSource {
+    fn from_headers_and_payload(headers: &HeaderMap, payload: &Value) -> Self {
+        if payload
+            .get("installation")
+            .and_then(|v| v.get("id"))
+            .and_then(Value::as_u64)
+            .is_some()
+        {
+            return Self::GithubApp;
+        }
+        let target_type = header_string(headers, "X-GitHub-Hook-Installation-Target-Type")
+            .map(|s| s.to_ascii_lowercase());
+        match target_type.as_deref() {
+            Some("organization") => Self::Organization,
+            Some("integration") => Self::GithubApp,
+            _ => Self::Repo,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GithubEvent {
+    IssueComment,
+    Issues,
+    PullRequest,
+    PullRequestReviewComment,
+    PullRequestReview,
+    Push,
+}
+
+impl GithubEvent {
+    fn from_name(event: &str) -> Option<Self> {
+        match event {
+            "issue_comment" => Some(Self::IssueComment),
+            "issues" => Some(Self::Issues),
+            "pull_request" => Some(Self::PullRequest),
+            "pull_request_review_comment" => Some(Self::PullRequestReviewComment),
+            "pull_request_review" => Some(Self::PullRequestReview),
+            "push" => Some(Self::Push),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct EnabledEvents {
+    issue_comment: bool,
+    issues: bool,
+    pull_request: bool,
+    pull_request_review: bool,
+    pull_request_review_comment: bool,
+    push: bool,
+}
+
+impl EnabledEvents {
+    fn legacy_default() -> Self {
+        Self {
+            issue_comment: true,
+            issues: false,
+            pull_request: false,
+            pull_request_review: true,
+            pull_request_review_comment: true,
+            push: false,
+        }
+    }
+
+    fn expanded_default() -> Self {
+        Self {
+            issue_comment: true,
+            issues: true,
+            pull_request: true,
+            pull_request_review: true,
+            pull_request_review_comment: true,
+            push: true,
+        }
+    }
+
+    fn allows(self, event: GithubEvent) -> bool {
+        match event {
+            GithubEvent::IssueComment => self.issue_comment,
+            GithubEvent::Issues => self.issues,
+            GithubEvent::PullRequest => self.pull_request,
+            GithubEvent::PullRequestReview => self.pull_request_review,
+            GithubEvent::PullRequestReviewComment => self.pull_request_review_comment,
+            GithubEvent::Push => self.push,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct GithubWebhookRuntimeConfig {
+    enabled: bool,
+    listen: SocketAddr,
+    webhook_secret_env: String,
+    github_token_env: String,
+    github_app_id_env: String,
+    github_app_private_key_env: String,
+    auth_mode: GithubWebhookAuthModeToml,
+    min_permission: MinPermission,
+    allow_repo: Vec<String>,
+    command_prefix: String,
+    delivery_ttl_days: u64,
+    repo_ttl_days: u64,
+    enabled_sources: HashSet<WebhookSource>,
+    enabled_events: EnabledEvents,
+}
+
 #[derive(Debug, clap::Parser)]
 #[command(override_usage = "codex github [OPTIONS]")]
 pub struct GithubCommand {
     /// Address to listen on.
-    #[arg(long, default_value = DEFAULT_LISTEN_ADDR, value_name = "ADDR")]
-    listen: std::net::SocketAddr,
+    #[arg(long, value_name = "ADDR")]
+    listen: Option<SocketAddr>,
 
     /// Environment variable that contains the GitHub webhook secret.
-    #[arg(long, default_value = DEFAULT_WEBHOOK_SECRET_ENV, value_name = "ENV")]
-    webhook_secret_env: String,
+    #[arg(long, value_name = "ENV")]
+    webhook_secret_env: Option<String>,
 
     /// Environment variable that contains the GitHub token used for API calls.
-    #[arg(long, default_value = DEFAULT_GITHUB_TOKEN_ENV, value_name = "ENV")]
-    github_token_env: String,
+    #[arg(long, value_name = "ENV")]
+    github_token_env: Option<String>,
+
+    /// Environment variable that contains the GitHub App ID.
+    #[arg(long, value_name = "ENV")]
+    github_app_id_env: Option<String>,
+
+    /// Environment variable that contains the GitHub App private key.
+    #[arg(long, value_name = "ENV")]
+    github_app_private_key_env: Option<String>,
+
+    /// GitHub authentication mode.
+    #[arg(long, value_enum, value_name = "MODE")]
+    auth_mode: Option<GithubAuthMode>,
 
     /// Minimum required permission for the GitHub sender on the repository.
-    #[arg(long, value_enum, default_value_t = MinPermission::Triage, value_name = "PERMISSION")]
-    min_permission: MinPermission,
+    #[arg(long, value_enum, value_name = "PERMISSION")]
+    min_permission: Option<MinPermission>,
 
     /// Only handle events for these repositories (repeatable), e.g. OWNER/REPO.
     ///
@@ -165,16 +329,16 @@ pub struct GithubCommand {
     allow_repo: Vec<String>,
 
     /// Comment prefix that triggers Codex.
-    #[arg(long, default_value = DEFAULT_COMMAND_PREFIX, value_name = "PREFIX")]
-    command_prefix: String,
+    #[arg(long, value_name = "PREFIX")]
+    command_prefix: Option<String>,
 
     /// Delete delivery marker files older than this many days (0 disables).
-    #[arg(long, default_value_t = DEFAULT_DELIVERY_TTL_DAYS, value_name = "DAYS")]
-    delivery_ttl_days: u64,
+    #[arg(long, value_name = "DAYS")]
+    delivery_ttl_days: Option<u64>,
 
     /// Delete repo caches older than this many days since last use, when no worktrees exist (0 disables).
-    #[arg(long, default_value_t = DEFAULT_REPO_TTL_DAYS, value_name = "DAYS")]
-    repo_ttl_days: u64,
+    #[arg(long, value_name = "DAYS")]
+    repo_ttl_days: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -183,12 +347,33 @@ struct RepoKey {
     repo: String,
 }
 
+#[derive(Debug, Clone)]
+struct GithubAppCredentials {
+    app_id: u64,
+    private_key: Arc<String>,
+}
+
+#[derive(Clone)]
+struct GithubAuthConfig {
+    mode: GithubWebhookAuthModeToml,
+    static_token: Arc<String>,
+    app: Option<Arc<GithubAppCredentials>>,
+}
+
+impl GithubAuthConfig {
+    fn static_token(&self) -> Option<&str> {
+        (!self.static_token.is_empty()).then_some(self.static_token.as_str())
+    }
+}
+
 #[derive(Clone)]
 struct AppState {
     secret: Arc<Vec<u8>>,
-    github: Arc<GithubApi>,
-    github_token: Arc<String>,
+    github_api_base_url: Arc<String>,
+    github_auth: Arc<GithubAuthConfig>,
     allow_repos: Arc<HashSet<String>>,
+    enabled_sources: Arc<HashSet<WebhookSource>>,
+    enabled_events: EnabledEvents,
     min_permission: MinPermission,
     command_prefix: Arc<String>,
     repo_root: Arc<PathBuf>,
@@ -215,6 +400,7 @@ struct WorkKey {
 enum WorkKind {
     Issue,
     Pull,
+    Push,
 }
 
 impl WorkKind {
@@ -222,6 +408,7 @@ impl WorkKind {
         match self {
             WorkKind::Issue => "issues",
             WorkKind::Pull => "pulls",
+            WorkKind::Push => "pushes",
         }
     }
 
@@ -229,6 +416,7 @@ impl WorkKind {
         match self {
             WorkKind::Issue => "issue",
             WorkKind::Pull => "pull",
+            WorkKind::Push => "push",
         }
     }
 }
@@ -237,36 +425,66 @@ impl WorkKind {
 struct WorkItem {
     repo_full_name: String,
     sender_login: String,
+    source: WebhookSource,
+    installation_id: Option<u64>,
     work: WorkKey,
     prompt: String,
+    display_target: String,
+    push_ref: Option<String>,
+    push_after: Option<String>,
+    ack_target: AckTarget,
     response_target: ResponseTarget,
 }
 
 #[derive(Debug, Clone)]
 enum ResponseTarget {
+    None,
     IssueComment { issue_number: u64 },
     ReviewCommentReply { comment_id: u64 },
     PullRequestReview { pull_number: u64 },
 }
 
+#[derive(Debug, Clone, Copy)]
+enum AckTarget {
+    None,
+    IssueComment { comment_id: u64 },
+    ReviewComment { comment_id: u64 },
+}
+
+#[derive(Debug)]
+struct ResolvedGithubAccess {
+    token: String,
+    github: GithubApi,
+}
+
+#[derive(Serialize)]
+struct GithubAppJwtClaims {
+    iat: u64,
+    exp: u64,
+    iss: String,
+}
+
+#[derive(Debug)]
 struct GithubApi {
     client: reqwest::Client,
     base_url: String,
 }
 
 impl GithubApi {
-    fn new(token: String) -> Result<Self> {
-        Self::new_with_base_url(token, GITHUB_API_BASE_URL.to_string())
+    fn new_with_base_url(token: String, base_url: String) -> Result<Self> {
+        Self::new_with_optional_token(base_url, Some(token))
     }
 
-    fn new_with_base_url(token: String, base_url: String) -> Result<Self> {
+    fn new_with_optional_token(base_url: String, token: Option<String>) -> Result<Self> {
         let base_url = base_url.trim_end_matches('/').to_string();
         let mut headers = ReqwestHeaderMap::new();
-        let auth = format!("Bearer {token}");
-        headers.insert(
-            AUTHORIZATION,
-            ReqwestHeaderValue::from_str(&auth).context("invalid GitHub token")?,
-        );
+        if let Some(token) = token.filter(|token| !token.trim().is_empty()) {
+            let auth = format!("Bearer {token}");
+            headers.insert(
+                AUTHORIZATION,
+                ReqwestHeaderValue::from_str(&auth).context("invalid GitHub token")?,
+            );
+        }
         headers.insert(
             ACCEPT,
             ReqwestHeaderValue::from_static("application/vnd.github+json"),
@@ -338,6 +556,38 @@ impl GithubApi {
             anyhow::bail!("GitHub repo API returned empty default_branch: {body}");
         }
         Ok(default_branch.to_string())
+    }
+
+    async fn repo_installation_id(&self, owner: &str, repo: &str) -> Result<u64> {
+        let url = format!("{}/repos/{owner}/{repo}/installation", self.base_url);
+        let response = self.get_json_value(url).await?;
+        response
+            .get("id")
+            .and_then(Value::as_u64)
+            .context("GitHub repo installation API returned empty id")
+    }
+
+    async fn org_installation_id(&self, org: &str) -> Result<u64> {
+        let url = format!("{}/orgs/{org}/installation", self.base_url);
+        let response = self.get_json_value(url).await?;
+        response
+            .get("id")
+            .and_then(Value::as_u64)
+            .context("GitHub org installation API returned empty id")
+    }
+
+    async fn create_installation_token(&self, installation_id: u64) -> Result<String> {
+        let url = format!(
+            "{}/app/installations/{installation_id}/access_tokens",
+            self.base_url
+        );
+        let response = self.post_json_value(url, serde_json::json!({})).await?;
+        response
+            .get("token")
+            .and_then(Value::as_str)
+            .filter(|token| !token.is_empty())
+            .map(str::to_string)
+            .context("GitHub installation token API returned empty token")
     }
 
     async fn get_json_value(&self, url: String) -> Result<Value> {
@@ -414,6 +664,36 @@ impl GithubApi {
             .await
     }
 
+    async fn post_issue_comment_reaction(
+        &self,
+        owner: &str,
+        repo: &str,
+        comment_id: u64,
+        content: &str,
+    ) -> Result<()> {
+        let url = format!(
+            "{}/repos/{owner}/{repo}/issues/comments/{comment_id}/reactions",
+            self.base_url
+        );
+        self.post_json(url, serde_json::json!({ "content": content }))
+            .await
+    }
+
+    async fn post_review_comment_reaction(
+        &self,
+        owner: &str,
+        repo: &str,
+        comment_id: u64,
+        content: &str,
+    ) -> Result<()> {
+        let url = format!(
+            "{}/repos/{owner}/{repo}/pulls/comments/{comment_id}/reactions",
+            self.base_url
+        );
+        self.post_json(url, serde_json::json!({ "content": content }))
+            .await
+    }
+
     async fn create_pr_review(
         &self,
         owner: &str,
@@ -436,6 +716,11 @@ impl GithubApi {
     }
 
     async fn post_json(&self, url: String, body: Value) -> Result<()> {
+        self.post_json_value(url, body).await?;
+        Ok(())
+    }
+
+    async fn post_json_value(&self, url: String, body: Value) -> Result<Value> {
         let res = self
             .client
             .post(url)
@@ -448,7 +733,213 @@ impl GithubApi {
         if !status.is_success() {
             anyhow::bail!("GitHub API failed ({status}): {text}");
         }
-        Ok(())
+        if text.trim().is_empty() {
+            return Ok(Value::Null);
+        }
+        serde_json::from_str(&text).context("invalid GitHub JSON")
+    }
+}
+
+fn default_listen_addr() -> SocketAddr {
+    SocketAddr::from(([127, 0, 0, 1], 8787))
+}
+
+fn parse_min_permission_str(raw: &str) -> Result<MinPermission> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "read" => Ok(MinPermission::Read),
+        "triage" => Ok(MinPermission::Triage),
+        "write" => Ok(MinPermission::Write),
+        "maintain" => Ok(MinPermission::Maintain),
+        "admin" => Ok(MinPermission::Admin),
+        other => anyhow::bail!("invalid github_webhook.min_permission: {other}"),
+    }
+}
+
+fn resolve_enabled_sources(
+    configured: Option<Vec<GithubWebhookSourceToml>>,
+) -> HashSet<WebhookSource> {
+    let mut enabled_sources = HashSet::new();
+    for source in configured.unwrap_or_else(|| {
+        vec![
+            GithubWebhookSourceToml::Repo,
+            GithubWebhookSourceToml::Organization,
+            GithubWebhookSourceToml::GithubApp,
+        ]
+    }) {
+        let mapped = match source {
+            GithubWebhookSourceToml::Repo => WebhookSource::Repo,
+            GithubWebhookSourceToml::Organization => WebhookSource::Organization,
+            GithubWebhookSourceToml::GithubApp => WebhookSource::GithubApp,
+        };
+        enabled_sources.insert(mapped);
+    }
+    enabled_sources
+}
+
+fn resolve_enabled_events(
+    configured: Option<GithubWebhookEventsToml>,
+    has_github_webhook_config: bool,
+) -> EnabledEvents {
+    let mut enabled_events = if has_github_webhook_config {
+        EnabledEvents::expanded_default()
+    } else {
+        EnabledEvents::legacy_default()
+    };
+    if let Some(configured) = configured {
+        if let Some(value) = configured.issue_comment {
+            enabled_events.issue_comment = value;
+        }
+        if let Some(value) = configured.issues {
+            enabled_events.issues = value;
+        }
+        if let Some(value) = configured.pull_request {
+            enabled_events.pull_request = value;
+        }
+        if let Some(value) = configured.pull_request_review {
+            enabled_events.pull_request_review = value;
+        }
+        if let Some(value) = configured.pull_request_review_comment {
+            enabled_events.pull_request_review_comment = value;
+        }
+        if let Some(value) = configured.push {
+            enabled_events.push = value;
+        }
+    }
+    enabled_events
+}
+
+async fn resolve_runtime_config(
+    cmd: &GithubCommand,
+    root_config_overrides: &CliConfigOverrides,
+    codex_home: &Path,
+) -> Result<GithubWebhookRuntimeConfig> {
+    let config_cwd = AbsolutePathBuf::current_dir()?;
+    let cli_kv_overrides = root_config_overrides
+        .parse_overrides()
+        .map_err(anyhow::Error::msg)?;
+    let config_toml =
+        load_config_as_toml_with_cli_overrides(codex_home, &config_cwd, cli_kv_overrides)
+            .await
+            .context("failed to load config.toml for codex github")?;
+    let has_github_webhook_config = config_toml.github_webhook.is_some();
+    let github_webhook = config_toml.github_webhook.unwrap_or_default();
+
+    let min_permission = match cmd.min_permission {
+        Some(value) => value,
+        None => match github_webhook.min_permission.as_deref() {
+            Some(value) => parse_min_permission_str(value)?,
+            None => MinPermission::Triage,
+        },
+    };
+
+    let auth_mode = cmd
+        .auth_mode
+        .map(Into::into)
+        .or(github_webhook.auth_mode)
+        .unwrap_or(GithubWebhookAuthModeToml::Auto);
+
+    Ok(GithubWebhookRuntimeConfig {
+        enabled: github_webhook.enabled.unwrap_or(true),
+        listen: cmd
+            .listen
+            .or(github_webhook.listen)
+            .unwrap_or_else(default_listen_addr),
+        webhook_secret_env: cmd
+            .webhook_secret_env
+            .clone()
+            .or(github_webhook.webhook_secret_env)
+            .unwrap_or_else(|| DEFAULT_WEBHOOK_SECRET_ENV.to_string()),
+        github_token_env: cmd
+            .github_token_env
+            .clone()
+            .or(github_webhook.github_token_env)
+            .unwrap_or_else(|| DEFAULT_GITHUB_TOKEN_ENV.to_string()),
+        github_app_id_env: cmd
+            .github_app_id_env
+            .clone()
+            .or(github_webhook.github_app_id_env)
+            .unwrap_or_else(|| DEFAULT_GITHUB_APP_ID_ENV.to_string()),
+        github_app_private_key_env: cmd
+            .github_app_private_key_env
+            .clone()
+            .or(github_webhook.github_app_private_key_env)
+            .unwrap_or_else(|| DEFAULT_GITHUB_APP_PRIVATE_KEY_ENV.to_string()),
+        auth_mode,
+        min_permission,
+        allow_repo: if cmd.allow_repo.is_empty() {
+            github_webhook.allow_repos.unwrap_or_default()
+        } else {
+            cmd.allow_repo.clone()
+        },
+        command_prefix: cmd
+            .command_prefix
+            .clone()
+            .or(github_webhook.command_prefix)
+            .unwrap_or_else(|| DEFAULT_COMMAND_PREFIX.to_string()),
+        delivery_ttl_days: cmd
+            .delivery_ttl_days
+            .or(github_webhook.delivery_ttl_days)
+            .unwrap_or(DEFAULT_DELIVERY_TTL_DAYS),
+        repo_ttl_days: cmd
+            .repo_ttl_days
+            .or(github_webhook.repo_ttl_days)
+            .unwrap_or(DEFAULT_REPO_TTL_DAYS),
+        enabled_sources: resolve_enabled_sources(github_webhook.sources),
+        enabled_events: resolve_enabled_events(github_webhook.events, has_github_webhook_config),
+    })
+}
+
+fn read_env_optional(env_var: &str) -> Result<Option<String>> {
+    match std::env::var(env_var) {
+        Ok(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(trimmed.to_string()))
+            }
+        }
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            anyhow::bail!("environment variable {env_var} is not valid UTF-8")
+        }
+    }
+}
+
+fn normalize_github_app_private_key(raw: &str) -> Result<String> {
+    let trimmed = raw.trim();
+    if trimmed.contains("BEGIN") {
+        return Ok(trimmed.replace("\\n", "\n"));
+    }
+    let decoded = BASE64_STANDARD
+        .decode(trimmed)
+        .context("failed to decode GitHub App private key as base64")?;
+    String::from_utf8(decoded).context("GitHub App private key base64 payload is not valid UTF-8")
+}
+
+fn load_github_app_credentials(
+    app_id_env: &str,
+    private_key_env: &str,
+    auth_mode: GithubWebhookAuthModeToml,
+) -> Result<Option<Arc<GithubAppCredentials>>> {
+    let app_id = read_env_optional(app_id_env)?;
+    let private_key = read_env_optional(private_key_env)?;
+    match (app_id, private_key) {
+        (None, None) => {
+            if auth_mode == GithubWebhookAuthModeToml::GithubApp {
+                anyhow::bail!("GitHub App auth requires envs {app_id_env} and {private_key_env}");
+            }
+            Ok(None)
+        }
+        (Some(_), None) | (None, Some(_)) => {
+            anyhow::bail!("GitHub App auth requires both envs {app_id_env} and {private_key_env}")
+        }
+        (Some(app_id), Some(private_key)) => Ok(Some(Arc::new(GithubAppCredentials {
+            app_id: app_id
+                .parse::<u64>()
+                .with_context(|| format!("invalid GitHub App ID in env {app_id_env}"))?,
+            private_key: Arc::new(normalize_github_app_private_key(&private_key)?),
+        }))),
     }
 }
 
@@ -464,32 +955,63 @@ async fn run_main_with_shutdown<F>(
 where
     F: std::future::Future<Output = ()> + Send + 'static,
 {
-    let secret = read_env_required(&cmd.webhook_secret_env, "GitHub webhook secret")?;
-    let token = read_env_required(&cmd.github_token_env, "GitHub token")?;
-
     let codex_home = find_codex_home().context("failed to resolve CODEX_HOME")?;
+    let runtime = resolve_runtime_config(&cmd, &root_config_overrides, &codex_home).await?;
+    if !runtime.enabled {
+        anyhow::bail!("github webhook is disabled by config.toml")
+    }
+
+    let secret = read_env_required(&runtime.webhook_secret_env, "GitHub webhook secret")?;
+    let token = read_env_optional(&runtime.github_token_env)?.unwrap_or_default();
+    let github_app = load_github_app_credentials(
+        &runtime.github_app_id_env,
+        &runtime.github_app_private_key_env,
+        runtime.auth_mode,
+    )?;
+    if runtime.auth_mode == GithubWebhookAuthModeToml::Token && token.is_empty() {
+        anyhow::bail!(
+            "GitHub token not set: missing env {}",
+            runtime.github_token_env
+        );
+    }
+    if runtime.auth_mode == GithubWebhookAuthModeToml::Auto
+        && token.is_empty()
+        && github_app.is_none()
+    {
+        anyhow::bail!(
+            "codex github requires either env {} or GitHub App envs {} and {}",
+            runtime.github_token_env,
+            runtime.github_app_id_env,
+            runtime.github_app_private_key_env
+        );
+    }
+
     let repo_root = codex_home.join("github-repos");
     let delivery_markers_dir = codex_home.join("github").join("deliveries");
     let thread_state_dir = codex_home.join("github").join("threads");
-
-    let github = GithubApi::new(token.clone())?;
-    let allow_repos = normalize_allowlist(&cmd.allow_repo);
+    let allow_repos = normalize_allowlist(&runtime.allow_repo);
     let codex_bin = std::env::current_exe().context("failed to resolve current executable")?;
 
     let mut codex_config_overrides = root_config_overrides.raw_overrides;
     codex_config_overrides.push("approval_policy=\"never\"".to_string());
     codex_config_overrides.push("sandbox_mode=\"workspace-write\"".to_string());
 
-    let delivery_ttl = ttl_from_days(cmd.delivery_ttl_days);
-    let repo_ttl = ttl_from_days(cmd.repo_ttl_days);
+    let delivery_ttl = ttl_from_days(runtime.delivery_ttl_days);
+    let repo_ttl = ttl_from_days(runtime.repo_ttl_days);
 
     let state = AppState {
         secret: Arc::new(secret.into_bytes()),
-        github: Arc::new(github),
-        github_token: Arc::new(token),
+        github_api_base_url: Arc::new(GITHUB_API_BASE_URL.to_string()),
+        github_auth: Arc::new(GithubAuthConfig {
+            mode: runtime.auth_mode,
+            static_token: Arc::new(token),
+            app: github_app,
+        }),
         allow_repos: Arc::new(allow_repos),
-        min_permission: cmd.min_permission,
-        command_prefix: Arc::new(cmd.command_prefix),
+        enabled_sources: Arc::new(runtime.enabled_sources),
+        enabled_events: runtime.enabled_events,
+        min_permission: runtime.min_permission,
+        command_prefix: Arc::new(runtime.command_prefix),
         repo_root: Arc::new(repo_root),
         codex_bin: Arc::new(codex_bin),
         codex_config_overrides: Arc::new(codex_config_overrides),
@@ -511,11 +1033,11 @@ where
         .route("/healthz", get(healthz))
         .with_state(state);
 
-    let listener = TcpListener::bind(cmd.listen)
+    let listener = TcpListener::bind(runtime.listen)
         .await
-        .with_context(|| format!("failed to bind {}", cmd.listen))?;
+        .with_context(|| format!("failed to bind {}", runtime.listen))?;
 
-    eprintln!("codex github listening on http://{}", cmd.listen);
+    eprintln!("codex github listening on http://{}", runtime.listen);
     axum::serve(listener, app.into_make_service())
         .with_graceful_shutdown(shutdown)
         .await
@@ -690,7 +1212,8 @@ async fn gc_repo_cache_if_stale(
 async fn repo_worktrees_are_empty(repo_dir: &Path) -> Result<bool> {
     let issues_ok = dir_is_empty(&repo_dir.join("issues")).await?;
     let pulls_ok = dir_is_empty(&repo_dir.join("pulls")).await?;
-    Ok(issues_ok && pulls_ok)
+    let pushes_ok = dir_is_empty(&repo_dir.join("pushes")).await?;
+    Ok(issues_ok && pulls_ok && pushes_ok)
 }
 
 async fn dir_is_empty(path: &Path) -> Result<bool> {
@@ -735,7 +1258,7 @@ async fn handle_webhook(
     if body.len() > MAX_WEBHOOK_BYTES {
         return (StatusCode::PAYLOAD_TOO_LARGE, "payload too large").into_response();
     }
-    let Some(event) = header_string(&headers, "X-GitHub-Event") else {
+    let Some(event_name) = header_string(&headers, "X-GitHub-Event") else {
         return (StatusCode::BAD_REQUEST, "missing X-GitHub-Event").into_response();
     };
     let Some(delivery_id) = header_string(&headers, "X-GitHub-Delivery") else {
@@ -751,14 +1274,27 @@ async fn handle_webhook(
         Err(_) => return (StatusCode::BAD_REQUEST, "invalid json").into_response(),
     };
 
-    let work_item = match parse_work_item(&event, &payload, &state.command_prefix) {
-        Ok(Some(item)) => item,
-        Ok(None) => return (StatusCode::ACCEPTED, "ignored").into_response(),
-        Err(err) => {
-            eprintln!("payload parse failed: {err:#}");
-            return (StatusCode::BAD_REQUEST, "invalid payload").into_response();
-        }
+    let source = WebhookSource::from_headers_and_payload(&headers, &payload);
+    if !state.enabled_sources.contains(&source) {
+        return (StatusCode::ACCEPTED, "ignored").into_response();
+    }
+
+    let Some(event) = GithubEvent::from_name(&event_name) else {
+        return (StatusCode::ACCEPTED, "ignored").into_response();
     };
+    if !state.enabled_events.allows(event) {
+        return (StatusCode::ACCEPTED, "ignored").into_response();
+    }
+
+    let work_item =
+        match parse_work_item_with_source(event, source, &payload, &state.command_prefix) {
+            Ok(Some(item)) => item,
+            Ok(None) => return (StatusCode::ACCEPTED, "ignored").into_response(),
+            Err(err) => {
+                eprintln!("payload parse failed: {err:#}");
+                return (StatusCode::BAD_REQUEST, "invalid payload").into_response();
+            }
+        };
 
     if !repo_allowed(&state.allow_repos, &work_item.repo_full_name) {
         return (StatusCode::ACCEPTED, "ignored").into_response();
@@ -766,7 +1302,14 @@ async fn handle_webhook(
 
     let permit = match state.concurrency_limit.clone().try_acquire_owned() {
         Ok(p) => p,
-        Err(_) => return (StatusCode::SERVICE_UNAVAILABLE, "busy").into_response(),
+        Err(_) => {
+            if let Err(err) =
+                post_failure(&state, &work_item, "codex github is busy; try again later").await
+            {
+                eprintln!("failed to post busy notification: {err:#}");
+            }
+            return (StatusCode::SERVICE_UNAVAILABLE, "busy").into_response();
+        }
     };
 
     match sender_allowed(&state, &work_item).await {
@@ -774,6 +1317,15 @@ async fn handle_webhook(
         Ok(false) => return (StatusCode::ACCEPTED, "ignored").into_response(),
         Err(err) => {
             eprintln!("sender permission check failed: {err:#}");
+            if let Err(post_err) = post_failure(
+                &state,
+                &work_item,
+                "codex github could not verify sender permissions",
+            )
+            .await
+            {
+                eprintln!("failed to post permission-check notification: {post_err:#}");
+            }
             return (StatusCode::INTERNAL_SERVER_ERROR, "permission check failed").into_response();
         }
     }
@@ -783,12 +1335,25 @@ async fn handle_webhook(
         Ok(true) => {}
         Err(err) => {
             eprintln!("delivery claim failed: {err:#}");
+            if let Err(post_err) = post_failure(
+                &state,
+                &work_item,
+                "codex github could not claim this delivery",
+            )
+            .await
+            {
+                eprintln!("failed to post delivery-claim notification: {post_err:#}");
+            }
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "failed to claim delivery",
             )
                 .into_response();
         }
+    }
+
+    if let Err(err) = post_ack(&state, &work_item).await {
+        eprintln!("failed to post ack: {err:#}");
     }
 
     tokio::spawn(process_work_item(state, work_item, permit));
@@ -835,6 +1400,105 @@ fn repo_allowed(allow_repos: &HashSet<String>, repo_full_name: &str) -> bool {
     allow_repos.contains(&normalize_repo_full_name(repo_full_name))
 }
 
+fn generate_github_app_jwt(credentials: &GithubAppCredentials) -> Result<String> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let claims = GithubAppJwtClaims {
+        iat: now.saturating_sub(GITHUB_APP_JWT_BACKDATE_SECS),
+        exp: now.saturating_add(GITHUB_APP_JWT_LIFETIME_SECS),
+        iss: credentials.app_id.to_string(),
+    };
+    let encoding_key = EncodingKey::from_rsa_pem(credentials.private_key.as_bytes())
+        .context("failed to parse GitHub App private key")?;
+    jsonwebtoken::encode(&JwtHeader::new(Algorithm::RS256), &claims, &encoding_key)
+        .context("failed to sign GitHub App JWT")
+}
+
+async fn resolve_github_app_access(
+    state: &AppState,
+    item: &WorkItem,
+) -> Result<ResolvedGithubAccess> {
+    let credentials = state
+        .github_auth
+        .app
+        .as_ref()
+        .context("GitHub App credentials are not configured")?;
+    let jwt = generate_github_app_jwt(credentials)?;
+    let app_github = GithubApi::new_with_base_url(jwt, state.github_api_base_url.as_ref().clone())?;
+    let installation_id = match item.installation_id {
+        Some(value) => value,
+        None => match item.source {
+            WebhookSource::Organization => {
+                match app_github.org_installation_id(&item.work.owner).await {
+                    Ok(value) => value,
+                    Err(_) => {
+                        app_github
+                            .repo_installation_id(&item.work.owner, &item.work.repo)
+                            .await?
+                    }
+                }
+            }
+            WebhookSource::Repo | WebhookSource::GithubApp => {
+                app_github
+                    .repo_installation_id(&item.work.owner, &item.work.repo)
+                    .await?
+            }
+        },
+    };
+    let token = app_github
+        .create_installation_token(installation_id)
+        .await?;
+    let github =
+        GithubApi::new_with_base_url(token.clone(), state.github_api_base_url.as_ref().clone())?;
+    Ok(ResolvedGithubAccess { token, github })
+}
+
+async fn resolve_github_access(state: &AppState, item: &WorkItem) -> Result<ResolvedGithubAccess> {
+    match state.github_auth.mode {
+        GithubWebhookAuthModeToml::Token => {
+            let token = state
+                .github_auth
+                .static_token()
+                .context("GitHub token mode requires a configured static token")?
+                .to_string();
+            let github = GithubApi::new_with_base_url(
+                token.clone(),
+                state.github_api_base_url.as_ref().clone(),
+            )?;
+            Ok(ResolvedGithubAccess { token, github })
+        }
+        GithubWebhookAuthModeToml::GithubApp => resolve_github_app_access(state, item).await,
+        GithubWebhookAuthModeToml::Auto => {
+            if state.github_auth.app.is_some() {
+                match resolve_github_app_access(state, item).await {
+                    Ok(access) => return Ok(access),
+                    Err(err) if state.github_auth.static_token().is_some() => {
+                        eprintln!(
+                            "GitHub App auth failed for {}: {err:#}; falling back to static token",
+                            item.repo_full_name
+                        );
+                    }
+                    Err(err) => return Err(err),
+                }
+            }
+            let token = state
+                .github_auth
+                .static_token()
+                .context(
+                    "GitHub auto auth requires either a static token or GitHub App credentials",
+                )?
+                .to_string();
+            let github = GithubApi::new_with_base_url(
+                token.clone(),
+                state.github_api_base_url.as_ref().clone(),
+            )?;
+            Ok(ResolvedGithubAccess { token, github })
+        }
+    }
+}
+
 async fn sender_allowed(state: &AppState, item: &WorkItem) -> Result<bool> {
     let owner = item.work.owner.as_str();
     let repo = item.work.repo.as_str();
@@ -842,7 +1506,8 @@ async fn sender_allowed(state: &AppState, item: &WorkItem) -> Result<bool> {
     if sender.eq_ignore_ascii_case(owner) {
         return Ok(true);
     }
-    let permission = state
+    let access = resolve_github_access(state, item).await?;
+    let permission = access
         .github
         .repo_permission(owner, repo, sender)
         .await
@@ -932,58 +1597,382 @@ fn sanitize_filename_component(s: &str) -> String {
     if out.is_empty() { "_".to_string() } else { out }
 }
 
-fn parse_work_item(event: &str, payload: &Value, command_prefix: &str) -> Result<Option<WorkItem>> {
-    enum GithubEvent {
-        IssueComment,
-        PullRequestReviewComment,
-        PullRequestReview,
+fn installation_id_from_payload(payload: &Value) -> Option<u64> {
+    payload
+        .get("installation")
+        .and_then(|v| v.get("id"))
+        .and_then(Value::as_u64)
+}
+
+fn extract_sender_login(payload: &Value) -> Result<&str> {
+    payload
+        .get("sender")
+        .and_then(|v| v.get("login"))
+        .and_then(Value::as_str)
+        .or_else(|| {
+            payload
+                .get("pusher")
+                .and_then(|v| v.get("name"))
+                .and_then(Value::as_str)
+        })
+        .context("missing sender.login")
+}
+
+fn hash_work_number(value: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn display_target_for_push(ref_name: &str, after: &str) -> String {
+    let short_sha: String = after.chars().take(7).collect();
+    if short_sha.is_empty() {
+        ref_name.to_string()
+    } else {
+        format!("{ref_name}@{short_sha}")
     }
+}
 
-    let event = match event {
-        "issue_comment" => GithubEvent::IssueComment,
-        "pull_request_review_comment" => GithubEvent::PullRequestReviewComment,
-        "pull_request_review" => GithubEvent::PullRequestReview,
-        _ => return Ok(None),
-    };
+#[derive(Clone, Copy)]
+struct ParseContext<'a> {
+    owner: &'a str,
+    repo: &'a str,
+    repo_full_name: &'a str,
+    sender_login: &'a str,
+    source: WebhookSource,
+    installation_id: Option<u64>,
+    command_prefix: &'a str,
+}
 
+fn parse_work_item_with_source(
+    event: GithubEvent,
+    source: WebhookSource,
+    payload: &Value,
+    command_prefix: &str,
+) -> Result<Option<WorkItem>> {
     let repo_full_name = payload
         .get("repository")
         .and_then(|v| v.get("full_name"))
         .and_then(Value::as_str)
         .context("missing repository.full_name")?;
     let (owner, repo) = split_owner_repo(repo_full_name)?;
-    let sender_login = payload
-        .get("sender")
-        .and_then(|v| v.get("login"))
-        .and_then(Value::as_str)
-        .context("missing sender.login")?;
+    let sender_login = extract_sender_login(payload)?;
+    let ctx = ParseContext {
+        owner,
+        repo,
+        repo_full_name,
+        sender_login,
+        source,
+        installation_id: installation_id_from_payload(payload),
+        command_prefix,
+    };
 
     match event {
-        GithubEvent::IssueComment => parse_issue_comment(
-            owner,
-            repo,
-            repo_full_name,
-            sender_login,
-            payload,
-            command_prefix,
-        ),
-        GithubEvent::PullRequestReviewComment => parse_review_comment(
-            owner,
-            repo,
-            repo_full_name,
-            sender_login,
-            payload,
-            command_prefix,
-        ),
-        GithubEvent::PullRequestReview => parse_review(
-            owner,
-            repo,
-            repo_full_name,
-            sender_login,
-            payload,
-            command_prefix,
-        ),
+        GithubEvent::IssueComment => parse_issue_comment(ctx, payload),
+        GithubEvent::Issues => parse_issue_event(ctx, payload),
+        GithubEvent::PullRequest => parse_pull_request_event(ctx, payload),
+        GithubEvent::PullRequestReviewComment => parse_review_comment(ctx, payload),
+        GithubEvent::PullRequestReview => parse_review(ctx, payload),
+        GithubEvent::Push => parse_push_event(ctx, payload),
     }
+}
+
+fn parse_issue_comment(ctx: ParseContext<'_>, payload: &Value) -> Result<Option<WorkItem>> {
+    let action = payload
+        .get("action")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !matches!(action, "created" | "edited") {
+        return Ok(None);
+    }
+
+    let issue = payload.get("issue").context("missing issue")?;
+    let issue_number = issue
+        .get("number")
+        .and_then(Value::as_u64)
+        .context("missing issue.number")?;
+    let comment = payload.get("comment").context("missing comment")?;
+    let body = comment
+        .get("body")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let Some(prompt) = extract_command(body, ctx.command_prefix) else {
+        return Ok(None);
+    };
+
+    let is_pr = issue.get("pull_request").is_some();
+    let work_kind = if is_pr {
+        WorkKind::Pull
+    } else {
+        WorkKind::Issue
+    };
+
+    Ok(Some(WorkItem {
+        repo_full_name: ctx.repo_full_name.to_string(),
+        sender_login: ctx.sender_login.to_string(),
+        source: ctx.source,
+        installation_id: ctx.installation_id,
+        work: WorkKey {
+            owner: ctx.owner.to_string(),
+            repo: ctx.repo.to_string(),
+            kind: work_kind,
+            number: issue_number,
+        },
+        prompt,
+        display_target: format!("#{issue_number}"),
+        push_ref: None,
+        push_after: None,
+        ack_target: comment
+            .get("id")
+            .and_then(Value::as_u64)
+            .map_or(AckTarget::None, |comment_id| AckTarget::IssueComment {
+                comment_id,
+            }),
+        response_target: ResponseTarget::IssueComment { issue_number },
+    }))
+}
+
+fn parse_issue_event(ctx: ParseContext<'_>, payload: &Value) -> Result<Option<WorkItem>> {
+    let action = payload
+        .get("action")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !matches!(action, "opened" | "edited" | "reopened") {
+        return Ok(None);
+    }
+    let issue = payload.get("issue").context("missing issue")?;
+    let issue_number = issue
+        .get("number")
+        .and_then(Value::as_u64)
+        .context("missing issue.number")?;
+    let body = issue
+        .get("body")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let Some(prompt) = extract_command(body, ctx.command_prefix) else {
+        return Ok(None);
+    };
+
+    Ok(Some(WorkItem {
+        repo_full_name: ctx.repo_full_name.to_string(),
+        sender_login: ctx.sender_login.to_string(),
+        source: ctx.source,
+        installation_id: ctx.installation_id,
+        work: WorkKey {
+            owner: ctx.owner.to_string(),
+            repo: ctx.repo.to_string(),
+            kind: WorkKind::Issue,
+            number: issue_number,
+        },
+        prompt,
+        display_target: format!("#{issue_number}"),
+        push_ref: None,
+        push_after: None,
+        ack_target: AckTarget::None,
+        response_target: ResponseTarget::IssueComment { issue_number },
+    }))
+}
+
+fn parse_pull_request_event(ctx: ParseContext<'_>, payload: &Value) -> Result<Option<WorkItem>> {
+    let action = payload
+        .get("action")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !matches!(action, "opened" | "edited" | "reopened" | "synchronize") {
+        return Ok(None);
+    }
+    let pull_request = payload
+        .get("pull_request")
+        .context("missing pull_request")?;
+    let pull_number = pull_request
+        .get("number")
+        .and_then(Value::as_u64)
+        .or_else(|| payload.get("number").and_then(Value::as_u64))
+        .context("missing pull_request.number")?;
+    let body = pull_request
+        .get("body")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let Some(prompt) = extract_command(body, ctx.command_prefix) else {
+        return Ok(None);
+    };
+
+    Ok(Some(WorkItem {
+        repo_full_name: ctx.repo_full_name.to_string(),
+        sender_login: ctx.sender_login.to_string(),
+        source: ctx.source,
+        installation_id: ctx.installation_id,
+        work: WorkKey {
+            owner: ctx.owner.to_string(),
+            repo: ctx.repo.to_string(),
+            kind: WorkKind::Pull,
+            number: pull_number,
+        },
+        prompt,
+        display_target: format!("#{pull_number}"),
+        push_ref: None,
+        push_after: None,
+        ack_target: AckTarget::None,
+        response_target: ResponseTarget::IssueComment {
+            issue_number: pull_number,
+        },
+    }))
+}
+
+fn parse_review_comment(ctx: ParseContext<'_>, payload: &Value) -> Result<Option<WorkItem>> {
+    let action = payload
+        .get("action")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !matches!(action, "created" | "edited") {
+        return Ok(None);
+    }
+
+    let pull_number = payload
+        .get("pull_request")
+        .and_then(|v| v.get("number"))
+        .and_then(Value::as_u64)
+        .context("missing pull_request.number")?;
+    let comment = payload.get("comment").context("missing comment")?;
+    let comment_id = comment
+        .get("id")
+        .and_then(Value::as_u64)
+        .context("missing comment.id")?;
+    let body = comment
+        .get("body")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let Some(prompt) = extract_command(body, ctx.command_prefix) else {
+        return Ok(None);
+    };
+
+    Ok(Some(WorkItem {
+        repo_full_name: ctx.repo_full_name.to_string(),
+        sender_login: ctx.sender_login.to_string(),
+        source: ctx.source,
+        installation_id: ctx.installation_id,
+        work: WorkKey {
+            owner: ctx.owner.to_string(),
+            repo: ctx.repo.to_string(),
+            kind: WorkKind::Pull,
+            number: pull_number,
+        },
+        prompt,
+        display_target: format!("#{pull_number}"),
+        push_ref: None,
+        push_after: None,
+        ack_target: AckTarget::ReviewComment { comment_id },
+        response_target: ResponseTarget::ReviewCommentReply { comment_id },
+    }))
+}
+
+fn parse_review(ctx: ParseContext<'_>, payload: &Value) -> Result<Option<WorkItem>> {
+    let action = payload
+        .get("action")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !matches!(action, "submitted" | "edited") {
+        return Ok(None);
+    }
+
+    let pull_number = payload
+        .get("pull_request")
+        .and_then(|v| v.get("number"))
+        .and_then(Value::as_u64)
+        .context("missing pull_request.number")?;
+    let review = payload.get("review").context("missing review")?;
+    let body = review
+        .get("body")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let Some(prompt) = extract_review_commands(body, ctx.command_prefix) else {
+        return Ok(None);
+    };
+
+    Ok(Some(WorkItem {
+        repo_full_name: ctx.repo_full_name.to_string(),
+        sender_login: ctx.sender_login.to_string(),
+        source: ctx.source,
+        installation_id: ctx.installation_id,
+        work: WorkKey {
+            owner: ctx.owner.to_string(),
+            repo: ctx.repo.to_string(),
+            kind: WorkKind::Pull,
+            number: pull_number,
+        },
+        prompt,
+        display_target: format!("#{pull_number}"),
+        push_ref: None,
+        push_after: None,
+        ack_target: AckTarget::None,
+        response_target: ResponseTarget::PullRequestReview { pull_number },
+    }))
+}
+
+fn parse_push_event(ctx: ParseContext<'_>, payload: &Value) -> Result<Option<WorkItem>> {
+    if payload.get("deleted").and_then(Value::as_bool) == Some(true) {
+        return Ok(None);
+    }
+    let ref_name = payload
+        .get("ref")
+        .and_then(Value::as_str)
+        .context("missing ref")?;
+    let branch_name = match ref_name.strip_prefix("refs/heads/") {
+        Some(value) if !value.is_empty() => value,
+        _ => return Ok(None),
+    };
+    let after = payload
+        .get("after")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if after.is_empty() || after.chars().all(|ch| ch == '0') {
+        return Ok(None);
+    }
+    let head_commit = match payload.get("head_commit") {
+        Some(value) => value,
+        None => return Ok(None),
+    };
+    let message = head_commit
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let Some(prompt) = extract_command(message, ctx.command_prefix) else {
+        return Ok(None);
+    };
+
+    Ok(Some(WorkItem {
+        repo_full_name: ctx.repo_full_name.to_string(),
+        sender_login: ctx.sender_login.to_string(),
+        source: ctx.source,
+        installation_id: ctx.installation_id,
+        work: WorkKey {
+            owner: ctx.owner.to_string(),
+            repo: ctx.repo.to_string(),
+            kind: WorkKind::Push,
+            number: hash_work_number(ref_name),
+        },
+        prompt,
+        display_target: display_target_for_push(branch_name, after),
+        push_ref: Some(branch_name.to_string()),
+        push_after: Some(after.to_string()),
+        ack_target: AckTarget::None,
+        response_target: ResponseTarget::None,
+    }))
+}
+
+#[cfg(test)]
+fn parse_work_item(event: &str, payload: &Value, command_prefix: &str) -> Result<Option<WorkItem>> {
+    let Some(event) = GithubEvent::from_name(event) else {
+        return Ok(None);
+    };
+    let source = if installation_id_from_payload(payload).is_some() {
+        WebhookSource::GithubApp
+    } else if payload.get("organization").is_some() {
+        WebhookSource::Organization
+    } else {
+        WebhookSource::Repo
+    };
+    parse_work_item_with_source(event, source, payload, command_prefix)
 }
 
 fn split_owner_repo(full_name: &str) -> Result<(&str, &str)> {
@@ -1007,150 +1996,12 @@ fn is_safe_repo_component(s: &str) -> bool {
         .all(|c| matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.'))
 }
 
-fn parse_issue_comment(
-    owner: &str,
-    repo: &str,
-    repo_full_name: &str,
-    sender_login: &str,
-    payload: &Value,
-    command_prefix: &str,
-) -> Result<Option<WorkItem>> {
-    let action = payload
-        .get("action")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    if !matches!(action, "created" | "edited") {
-        return Ok(None);
-    }
-
-    let body = payload
-        .get("comment")
-        .and_then(|v| v.get("body"))
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let prompt = strip_prefix_prompt(body, command_prefix)?;
-    let Some(prompt) = prompt else {
-        return Ok(None);
-    };
-
-    let issue = payload.get("issue").context("missing issue")?;
-    let issue_number = issue
-        .get("number")
-        .and_then(Value::as_u64)
-        .context("missing issue.number")?;
-    let is_pr = issue.get("pull_request").is_some();
-
-    let kind = if is_pr {
-        WorkKind::Pull
-    } else {
-        WorkKind::Issue
-    };
-    Ok(Some(WorkItem {
-        repo_full_name: repo_full_name.to_string(),
-        sender_login: sender_login.to_string(),
-        work: WorkKey {
-            owner: owner.to_string(),
-            repo: repo.to_string(),
-            kind,
-            number: issue_number,
-        },
-        prompt,
-        response_target: ResponseTarget::IssueComment { issue_number },
-    }))
+fn extract_command(body: &str, prefix: &str) -> Option<String> {
+    strip_prefix_prompt(body, prefix).ok().flatten()
 }
 
-fn parse_review_comment(
-    owner: &str,
-    repo: &str,
-    repo_full_name: &str,
-    sender_login: &str,
-    payload: &Value,
-    command_prefix: &str,
-) -> Result<Option<WorkItem>> {
-    let action = payload
-        .get("action")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    if !matches!(action, "created" | "edited") {
-        return Ok(None);
-    }
-
-    let comment = payload.get("comment").context("missing comment")?;
-    let body = comment
-        .get("body")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let prompt = strip_prefix_prompt(body, command_prefix)?;
-    let Some(prompt) = prompt else {
-        return Ok(None);
-    };
-    let comment_id = comment
-        .get("id")
-        .and_then(Value::as_u64)
-        .context("missing comment.id")?;
-    let pull_number = payload
-        .get("pull_request")
-        .and_then(|v| v.get("number"))
-        .and_then(Value::as_u64)
-        .context("missing pull_request.number")?;
-
-    Ok(Some(WorkItem {
-        repo_full_name: repo_full_name.to_string(),
-        sender_login: sender_login.to_string(),
-        work: WorkKey {
-            owner: owner.to_string(),
-            repo: repo.to_string(),
-            kind: WorkKind::Pull,
-            number: pull_number,
-        },
-        prompt,
-        response_target: ResponseTarget::ReviewCommentReply { comment_id },
-    }))
-}
-
-fn parse_review(
-    owner: &str,
-    repo: &str,
-    repo_full_name: &str,
-    sender_login: &str,
-    payload: &Value,
-    command_prefix: &str,
-) -> Result<Option<WorkItem>> {
-    let action = payload
-        .get("action")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    if !matches!(action, "submitted" | "edited") {
-        return Ok(None);
-    }
-    let pull_number = payload
-        .get("pull_request")
-        .and_then(|v| v.get("number"))
-        .and_then(Value::as_u64)
-        .context("missing pull_request.number")?;
-
-    let review_body = payload
-        .get("review")
-        .and_then(|v| v.get("body"))
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let prompt = strip_prefix_lines(review_body, command_prefix);
-    let Some(prompt) = prompt else {
-        return Ok(None);
-    };
-
-    Ok(Some(WorkItem {
-        repo_full_name: repo_full_name.to_string(),
-        sender_login: sender_login.to_string(),
-        work: WorkKey {
-            owner: owner.to_string(),
-            repo: repo.to_string(),
-            kind: WorkKind::Pull,
-            number: pull_number,
-        },
-        prompt,
-        response_target: ResponseTarget::PullRequestReview { pull_number },
-    }))
+fn extract_review_commands(body: &str, prefix: &str) -> Option<String> {
+    strip_prefix_lines(body, prefix)
 }
 
 fn strip_prefix_prompt(body: &str, prefix: &str) -> Result<Option<String>> {
@@ -1217,13 +2068,14 @@ async fn process_work_item(
 }
 
 async fn process_work_item_inner(state: &AppState, item: &WorkItem) -> Result<()> {
+    let access = resolve_github_access(state, item).await?;
     let work_dir = worktree_path(state, &item.work);
-    ensure_repo_and_worktree(state, &item.work, &work_dir).await?;
-    let output = run_codex_in_worktree(state, item, &work_dir).await?;
+    ensure_repo_and_worktree(state, item, &access.github, &access.token, &work_dir).await?;
+    let output = run_codex_in_worktree_with_github(state, item, &access.github, &work_dir).await?;
     if let Some(thread_id) = output.thread_id.as_deref() {
         write_thread_id(state, &item.work, thread_id).await?;
     }
-    post_success(state, item, &output.last_message).await?;
+    post_success_with_github(&access.github, item, &output.last_message).await?;
     Ok(())
 }
 
@@ -1279,23 +2131,30 @@ async fn touch_repo_markers(state: &AppState, key: &WorkKey) -> Result<()> {
     Ok(())
 }
 
-async fn ensure_repo_and_worktree(state: &AppState, key: &WorkKey, work_dir: &Path) -> Result<()> {
+async fn ensure_repo_and_worktree(
+    state: &AppState,
+    item: &WorkItem,
+    github: &GithubApi,
+    github_token: &str,
+    work_dir: &Path,
+) -> Result<()> {
+    let key = &item.work;
     let repo_dir = clone_path(state, key);
     let repo_lock = repo_lock_for(state, &key.owner, &key.repo).await;
     let _repo_guard = repo_lock.lock().await;
 
     touch_repo_markers(state, key).await?;
-    ensure_clone(state, key, &repo_dir).await?;
-    ensure_worktree(state, key, &repo_dir, work_dir).await?;
+    ensure_clone_with_token(key, &repo_dir, github_token).await?;
+    ensure_worktree_with_access(item, github, github_token, &repo_dir, work_dir).await?;
     Ok(())
 }
 
-async fn ensure_clone(state: &AppState, key: &WorkKey, repo_dir: &Path) -> Result<()> {
+async fn ensure_clone_with_token(key: &WorkKey, repo_dir: &Path, github_token: &str) -> Result<()> {
     if repo_dir.join(".git").exists() {
         run_git(
             repo_dir,
             git_args(&["fetch", "--prune", "origin"]),
-            state.github_token.as_str(),
+            github_token,
         )
         .await?;
         return Ok(());
@@ -1313,7 +2172,7 @@ async fn ensure_clone(state: &AppState, key: &WorkKey, repo_dir: &Path) -> Resul
     cmd.kill_on_drop(true);
     cmd.current_dir(parent)
         .env("GH_PROMPT_DISABLED", "1")
-        .env("GH_TOKEN", state.github_token.as_str())
+        .env("GH_TOKEN", github_token)
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("LC_ALL", "C")
         .args(["repo", "clone"])
@@ -1340,7 +2199,7 @@ async fn ensure_clone(state: &AppState, key: &WorkKey, repo_dir: &Path) -> Resul
     let mut args = git_args(&["clone", "--filter=blob:none"]);
     args.push(url);
     args.push(repo_dir.display().to_string());
-    run_git(parent, args, state.github_token.as_str())
+    run_git(parent, args, github_token)
         .await
         .context("git clone failed")?;
 
@@ -1351,12 +2210,14 @@ fn github_clone_url(owner: &str, repo: &str) -> String {
     format!("https://github.com/{owner}/{repo}.git")
 }
 
-async fn ensure_worktree(
-    state: &AppState,
-    key: &WorkKey,
+async fn ensure_worktree_with_access(
+    item: &WorkItem,
+    github: &GithubApi,
+    github_token: &str,
     repo_dir: &Path,
     work_dir: &Path,
 ) -> Result<()> {
+    let key = &item.work;
     match tokio::fs::metadata(work_dir).await {
         Ok(meta) => {
             if !meta.is_dir() {
@@ -1413,33 +2274,94 @@ async fn ensure_worktree(
 
     match key.kind {
         WorkKind::Issue => {
-            let default_branch = state
-                .github
-                .repo_default_branch(&key.owner, &key.repo)
-                .await?;
+            let default_branch = github.repo_default_branch(&key.owner, &key.repo).await?;
             let base = format!("origin/{default_branch}");
             let mut args = git_args(&["worktree", "add", "-B"]);
             args.push(branch);
             args.push(work_dir.display().to_string());
             args.push(base);
-            run_git(repo_dir, args, state.github_token.as_str()).await?;
+            run_git(repo_dir, args, github_token).await?;
         }
         WorkKind::Pull => {
             let refspec = format!("pull/{}/head:{}", key.number, branch);
             run_git(
                 repo_dir,
                 vec!["fetch".to_string(), "origin".to_string(), refspec],
-                state.github_token.as_str(),
+                github_token,
             )
             .await?;
             let mut args = git_args(&["worktree", "add"]);
             args.push(work_dir.display().to_string());
             args.push(branch);
-            run_git(repo_dir, args, state.github_token.as_str()).await?;
+            run_git(repo_dir, args, github_token).await?;
+        }
+        WorkKind::Push => {
+            let push_ref = item
+                .push_ref
+                .as_deref()
+                .context("missing push ref for push work item")?;
+            run_git(
+                repo_dir,
+                vec![
+                    "fetch".to_string(),
+                    "origin".to_string(),
+                    push_ref.to_string(),
+                ],
+                github_token,
+            )
+            .await?;
+            let base = format!("origin/{push_ref}");
+            let mut args = git_args(&["worktree", "add", "-B"]);
+            args.push(branch);
+            args.push(work_dir.display().to_string());
+            args.push(base);
+            run_git(repo_dir, args, github_token).await?;
         }
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+async fn ensure_clone(state: &AppState, key: &WorkKey, repo_dir: &Path) -> Result<()> {
+    let github_token = state
+        .github_auth
+        .static_token()
+        .context("test/helper ensure_clone requires a static GitHub token")?;
+    ensure_clone_with_token(key, repo_dir, github_token).await
+}
+
+#[cfg(test)]
+async fn ensure_worktree(
+    state: &AppState,
+    key: &WorkKey,
+    repo_dir: &Path,
+    work_dir: &Path,
+) -> Result<()> {
+    let github_token = state
+        .github_auth
+        .static_token()
+        .context("test/helper ensure_worktree requires a static GitHub token")?;
+    let github = GithubApi::new_with_base_url(
+        github_token.to_string(),
+        state.github_api_base_url.as_ref().clone(),
+    )?;
+    let item = WorkItem {
+        repo_full_name: format!("{}/{}", key.owner, key.repo),
+        sender_login: "tester".to_string(),
+        source: WebhookSource::Repo,
+        installation_id: None,
+        work: key.clone(),
+        prompt: "test".to_string(),
+        display_target: format!("#{}", key.number),
+        push_ref: None,
+        push_after: None,
+        ack_target: AckTarget::None,
+        response_target: ResponseTarget::IssueComment {
+            issue_number: key.number,
+        },
+    };
+    ensure_worktree_with_access(&item, &github, github_token, repo_dir, work_dir).await
 }
 
 fn git_args(args: &[&str]) -> Vec<String> {
@@ -1541,10 +2463,35 @@ struct FetchedGithubContext {
     markdown: String,
 }
 
+async fn fetch_github_context_for_item(
+    github: &GithubApi,
+    item: &WorkItem,
+) -> Result<FetchedGithubContext> {
+    match item.work.kind {
+        WorkKind::Issue => fetch_issue_context(github, &item.work).await,
+        WorkKind::Pull => fetch_pull_context(github, &item.work).await,
+        WorkKind::Push => fetch_push_context(github, item).await,
+    }
+}
+
+async fn fetch_push_context(github: &GithubApi, item: &WorkItem) -> Result<FetchedGithubContext> {
+    let owner = item.work.owner.as_str();
+    let repo = item.work.repo.as_str();
+    let after = item
+        .push_after
+        .as_deref()
+        .context("missing push sha for push work item")?;
+    let commit_url = format!("{}/repos/{owner}/{repo}/commits/{after}", github.base_url);
+    let commit = github.get_json_value(commit_url).await?;
+    Ok(format_push_context(item, &commit))
+}
+
+#[cfg(test)]
 async fn fetch_github_context(github: &GithubApi, key: &WorkKey) -> Result<FetchedGithubContext> {
     match key.kind {
         WorkKind::Issue => fetch_issue_context(github, key).await,
         WorkKind::Pull => fetch_pull_context(github, key).await,
+        WorkKind::Push => anyhow::bail!("fetch_github_context requires WorkItem for push events"),
     }
 }
 
@@ -1734,6 +2681,60 @@ fn format_pull_context(
     }
 }
 
+fn format_push_context(item: &WorkItem, commit: &Value) -> FetchedGithubContext {
+    let title = commit
+        .get("commit")
+        .and_then(|v| v.get("message"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .to_string();
+    let url = json_str(commit, "html_url");
+    let author = json_user_login(commit);
+    let committed_at = commit
+        .get("commit")
+        .and_then(|v| v.get("author"))
+        .and_then(|v| v.get("date"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let message = commit
+        .get("commit")
+        .and_then(|v| v.get("message"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let sha = item.push_after.as_deref().unwrap_or_default();
+    let ref_name = item.push_ref.as_deref().unwrap_or_default();
+
+    let mut out = String::new();
+    out.push_str(&format!(
+        "# Push {} ref={} sha={}\n\n",
+        item.repo_full_name, ref_name, sha
+    ));
+    if !title.is_empty() {
+        out.push_str(&format!("Title: {title}\n"));
+    }
+    if !url.is_empty() {
+        out.push_str(&format!("URL: {url}\n"));
+    }
+    if !author.is_empty() {
+        out.push_str(&format!("Author: @{author}\n"));
+    }
+    if !committed_at.is_empty() {
+        out.push_str(&format!("Committed: {committed_at}\n"));
+    }
+
+    out.push_str("\n## Commit message\n\n");
+    out.push_str(message);
+    out.push('\n');
+
+    FetchedGithubContext {
+        title,
+        markdown: out,
+    }
+}
+
 fn format_issue_comment(out: &mut String, comment: &Value) {
     let id = comment
         .get("id")
@@ -1840,9 +2841,10 @@ fn json_user_login(v: &Value) -> &str {
         .unwrap_or_default()
 }
 
-async fn run_codex_in_worktree(
+async fn run_codex_in_worktree_with_github(
     state: &AppState,
     item: &WorkItem,
+    github: &GithubApi,
     work_dir: &Path,
 ) -> Result<CodexOutput> {
     let thread_id = read_thread_id(state, &item.work).await?;
@@ -1850,43 +2852,70 @@ async fn run_codex_in_worktree(
     let tempdir = tempfile::tempdir().context("failed to create temp dir")?;
     let last_message_path = tempdir.path().join("last_message.txt");
     let context_path = work_dir.join(GITHUB_CONTEXT_FILENAME);
-    let (context_title, context_note) =
-        match fetch_github_context(state.github.as_ref(), &item.work).await {
-            Ok(ctx) => {
-                if let Err(err) = tokio::fs::write(&context_path, ctx.markdown).await {
-                    eprintln!("failed to write {}: {err:#}", context_path.display());
-                    (
-                        ctx.title,
-                        "Context: (failed to write context file)\n".to_string(),
-                    )
-                } else {
-                    (ctx.title, format!("Context: {GITHUB_CONTEXT_FILENAME}\n"))
-                }
-            }
-            Err(err) => {
-                eprintln!("failed to fetch GitHub context: {err:#}");
-                let _ = tokio::fs::write(
-                    &context_path,
-                    format!("# GitHub context fetch failed\n\n{err:#}\n"),
-                )
-                .await;
+    let (context_title, context_note) = match fetch_github_context_for_item(github, item).await {
+        Ok(ctx) => {
+            if let Err(err) = tokio::fs::write(&context_path, ctx.markdown).await {
+                eprintln!("failed to write {}: {err:#}", context_path.display());
                 (
-                    String::new(),
-                    format!("Context: {GITHUB_CONTEXT_FILENAME} (fetch failed)\n"),
+                    ctx.title,
+                    "Context: (failed to write context file)
+"
+                    .to_string(),
+                )
+            } else {
+                (
+                    ctx.title,
+                    format!(
+                        "Context: {GITHUB_CONTEXT_FILENAME}
+"
+                    ),
                 )
             }
-        };
+        }
+        Err(err) => {
+            eprintln!("failed to fetch GitHub context: {err:#}");
+            let _ = tokio::fs::write(
+                &context_path,
+                format!(
+                    "# GitHub context fetch failed
+
+{err:#}
+"
+                ),
+            )
+            .await;
+            (
+                String::new(),
+                format!(
+                    "Context: {GITHUB_CONTEXT_FILENAME} (fetch failed)
+"
+                ),
+            )
+        }
+    };
 
     let title_line = if context_title.is_empty() {
         String::new()
     } else {
-        format!("Title: {context_title}\n")
+        format!(
+            "Title: {context_title}
+"
+        )
+    };
+    let subject = match item.work.kind {
+        WorkKind::Push => format!("{} {}", item.repo_full_name, item.display_target),
+        WorkKind::Issue | WorkKind::Pull => {
+            format!("{}{}", item.repo_full_name, item.display_target)
+        }
     };
     let prompt = format!(
-        "GitHub {kind} event for {repo_full_name}#{number} from @{sender}.\n{title_line}{context_note}\nCommand:\n{command}\n\nRead {GITHUB_CONTEXT_FILENAME} first, then do the command.",
+        "GitHub {kind} event for {subject} from @{sender}.
+{title_line}{context_note}
+Command:
+{command}
+
+Read {GITHUB_CONTEXT_FILENAME} first, then do the command.",
         kind = item.work.kind.label(),
-        repo_full_name = item.repo_full_name.as_str(),
-        number = item.work.number,
         sender = item.sender_login.as_str(),
         command = item.prompt.as_str()
     );
@@ -1971,6 +3000,16 @@ async fn run_codex_in_worktree(
     })
 }
 
+#[cfg(test)]
+async fn run_codex_in_worktree(
+    state: &AppState,
+    item: &WorkItem,
+    work_dir: &Path,
+) -> Result<CodexOutput> {
+    let access = resolve_github_access(state, item).await?;
+    run_codex_in_worktree_with_github(state, item, &access.github, work_dir).await
+}
+
 fn truncate_for_github(s: &str) -> String {
     const LIMIT: usize = 60_000;
     if s.len() <= LIMIT {
@@ -2019,25 +3058,27 @@ fn thread_id_path(state: &AppState, key: &WorkKey) -> PathBuf {
         .join(format!("{}.txt", key.number))
 }
 
-async fn post_success(state: &AppState, item: &WorkItem, message: &str) -> Result<()> {
+async fn post_success_with_github(
+    github: &GithubApi,
+    item: &WorkItem,
+    message: &str,
+) -> Result<()> {
     let owner = item.work.owner.as_str();
     let repo = item.work.repo.as_str();
     match item.response_target {
+        ResponseTarget::None => {}
         ResponseTarget::IssueComment { issue_number } => {
-            state
-                .github
+            github
                 .post_issue_comment(owner, repo, issue_number, message)
                 .await?;
         }
         ResponseTarget::ReviewCommentReply { comment_id } => {
-            state
-                .github
+            github
                 .post_review_comment_reply(owner, repo, comment_id, message)
                 .await?;
         }
         ResponseTarget::PullRequestReview { pull_number } => {
-            state
-                .github
+            github
                 .create_pr_review(owner, repo, pull_number, message)
                 .await?;
         }
@@ -2045,9 +3086,61 @@ async fn post_success(state: &AppState, item: &WorkItem, message: &str) -> Resul
     Ok(())
 }
 
+async fn post_ack_with_github(github: &GithubApi, item: &WorkItem) -> Result<()> {
+    let owner = item.work.owner.as_str();
+    let repo = item.work.repo.as_str();
+    match item.ack_target {
+        AckTarget::IssueComment { comment_id } => {
+            if github
+                .post_issue_comment_reaction(owner, repo, comment_id, ACKNOWLEDGMENT_REACTION)
+                .await
+                .is_ok()
+            {
+                return Ok(());
+            }
+        }
+        AckTarget::ReviewComment { comment_id } => {
+            if github
+                .post_review_comment_reaction(owner, repo, comment_id, ACKNOWLEDGMENT_REACTION)
+                .await
+                .is_ok()
+            {
+                return Ok(());
+            }
+        }
+        AckTarget::None => {}
+    }
+    post_success_with_github(github, item, ACKNOWLEDGMENT_MESSAGE).await
+}
+
+async fn post_ack(state: &AppState, item: &WorkItem) -> Result<()> {
+    if matches!(item.response_target, ResponseTarget::None) {
+        return Ok(());
+    }
+    let access = resolve_github_access(state, item).await?;
+    post_ack_with_github(&access.github, item).await
+}
+
 async fn post_failure(state: &AppState, item: &WorkItem, err: &str) -> Result<()> {
-    let body = truncate_for_github(&format!("codex github failed:\n\n{err}"));
-    post_success(state, item, &body).await
+    if matches!(item.response_target, ResponseTarget::None) {
+        return Ok(());
+    }
+    let access = resolve_github_access(state, item).await?;
+    let body = truncate_for_github(&format!(
+        "codex github failed:
+
+{err}"
+    ));
+    post_success_with_github(&access.github, item, &body).await
+}
+
+#[cfg(test)]
+async fn post_success(state: &AppState, item: &WorkItem, message: &str) -> Result<()> {
+    if matches!(item.response_target, ResponseTarget::None) {
+        return Ok(());
+    }
+    let access = resolve_github_access(state, item).await?;
+    post_success_with_github(&access.github, item, message).await
 }
 
 #[cfg(test)]
@@ -2162,15 +3255,33 @@ mod tests {
         std::fs::set_permissions(path, perms).expect("chmod");
     }
 
+    fn test_github_auth(token: &str) -> Arc<GithubAuthConfig> {
+        Arc::new(GithubAuthConfig {
+            mode: GithubWebhookAuthModeToml::Token,
+            static_token: Arc::new(token.to_string()),
+            app: None,
+        })
+    }
+
+    fn test_enabled_sources() -> Arc<HashSet<WebhookSource>> {
+        Arc::new(HashSet::from([
+            WebhookSource::Repo,
+            WebhookSource::Organization,
+            WebhookSource::GithubApp,
+        ]))
+    }
+
     fn test_state(temp: &tempfile::TempDir) -> AppState {
         let github =
             GithubApi::new_with_base_url("t".to_string(), "http://example.invalid".to_string())
                 .expect("create github api");
         AppState {
             secret: Arc::new(b"sekrit".to_vec()),
-            github: Arc::new(github),
-            github_token: Arc::new("t".to_string()),
+            github_api_base_url: Arc::new(github.base_url),
+            github_auth: test_github_auth("t"),
             allow_repos: Arc::new(HashSet::new()),
+            enabled_sources: test_enabled_sources(),
+            enabled_events: EnabledEvents::expanded_default(),
             min_permission: MinPermission::Triage,
             command_prefix: Arc::new(DEFAULT_COMMAND_PREFIX.to_string()),
             repo_root: Arc::new(temp.path().join("repos")),
@@ -2285,8 +3396,8 @@ mod tests {
     fn github_command_defaults_to_github_env_vars() {
         let cmd = <GithubCommand as clap::Parser>::try_parse_from(["github"].as_ref())
             .expect("parse should succeed");
-        assert_eq!(cmd.webhook_secret_env, DEFAULT_WEBHOOK_SECRET_ENV);
-        assert_eq!(cmd.github_token_env, DEFAULT_GITHUB_TOKEN_ENV);
+        assert_eq!(cmd.webhook_secret_env, None);
+        assert_eq!(cmd.github_token_env, None);
     }
 
     #[test]
@@ -2324,7 +3435,10 @@ mod tests {
 
     #[test]
     fn github_api_new_rejects_invalid_token_header_value() {
-        let err = GithubApi::new("bad\ntoken".to_string()).err().unwrap();
+        let err =
+            GithubApi::new_with_base_url("bad\ntoken".to_string(), GITHUB_API_BASE_URL.to_string())
+                .err()
+                .unwrap();
         assert!(format!("{err:#}").contains("invalid GitHub token"));
     }
 
@@ -2602,9 +3716,228 @@ mod tests {
     }
 
     #[test]
+    fn webhook_source_detection_prefers_payload_installation_then_header() {
+        let payload = serde_json::json!({});
+        let headers = HeaderMap::new();
+        assert_eq!(
+            WebhookSource::from_headers_and_payload(&headers, &payload),
+            WebhookSource::Repo
+        );
+
+        let mut org_headers = HeaderMap::new();
+        org_headers.insert(
+            "X-GitHub-Hook-Installation-Target-Type",
+            HeaderValue::from_static("organization"),
+        );
+        assert_eq!(
+            WebhookSource::from_headers_and_payload(&org_headers, &payload),
+            WebhookSource::Organization
+        );
+
+        let mut integration_headers = HeaderMap::new();
+        integration_headers.insert(
+            "X-GitHub-Hook-Installation-Target-Type",
+            HeaderValue::from_static("integration"),
+        );
+        assert_eq!(
+            WebhookSource::from_headers_and_payload(&integration_headers, &payload),
+            WebhookSource::GithubApp
+        );
+
+        let app_payload = serde_json::json!({
+            "installation": { "id": 42 },
+            "organization": { "login": "o" }
+        });
+        assert_eq!(
+            WebhookSource::from_headers_and_payload(&org_headers, &app_payload),
+            WebhookSource::GithubApp
+        );
+    }
+
+    #[test]
+    fn resolve_enabled_events_keeps_legacy_defaults_without_config() {
+        let legacy = resolve_enabled_events(None, false);
+        assert_eq!(legacy.issue_comment, true);
+        assert_eq!(legacy.issues, false);
+        assert_eq!(legacy.pull_request, false);
+        assert_eq!(legacy.pull_request_review, true);
+        assert_eq!(legacy.pull_request_review_comment, true);
+        assert_eq!(legacy.push, false);
+
+        let expanded = resolve_enabled_events(None, true);
+        assert_eq!(expanded.issue_comment, true);
+        assert_eq!(expanded.issues, true);
+        assert_eq!(expanded.pull_request, true);
+        assert_eq!(expanded.pull_request_review, true);
+        assert_eq!(expanded.pull_request_review_comment, true);
+        assert_eq!(expanded.push, true);
+    }
+
+    #[test]
+    fn parse_issue_event_extracts_prompt_and_installation() {
+        let payload = serde_json::json!({
+            "action": "opened",
+            "installation": { "id": 77 },
+            "repository": { "full_name": "o/r" },
+            "sender": { "login": "u" },
+            "issue": { "number": 9, "body": "/codex investigate" }
+        });
+        let item = parse_work_item("issues", &payload, "/codex")
+            .unwrap()
+            .unwrap();
+        assert_eq!(item.source, WebhookSource::GithubApp);
+        assert_eq!(item.installation_id, Some(77));
+        assert_eq!(
+            item.work,
+            WorkKey {
+                owner: "o".to_string(),
+                repo: "r".to_string(),
+                kind: WorkKind::Issue,
+                number: 9,
+            }
+        );
+        assert_eq!(item.prompt, "investigate");
+        match item.response_target {
+            ResponseTarget::IssueComment { issue_number } => assert_eq!(issue_number, 9),
+            other => panic!("unexpected response target: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_pull_request_event_extracts_prompt_from_body() {
+        let payload = serde_json::json!({
+            "action": "synchronize",
+            "repository": { "full_name": "o/r" },
+            "sender": { "login": "u" },
+            "number": 17,
+            "pull_request": {
+                "number": 17,
+                "body": "/codex run regression"
+            }
+        });
+        let item = parse_work_item("pull_request", &payload, "/codex")
+            .unwrap()
+            .unwrap();
+        assert_eq!(item.source, WebhookSource::Repo);
+        assert_eq!(
+            item.work,
+            WorkKey {
+                owner: "o".to_string(),
+                repo: "r".to_string(),
+                kind: WorkKind::Pull,
+                number: 17,
+            }
+        );
+        assert_eq!(item.prompt, "run regression");
+        assert_eq!(item.display_target, "#17");
+    }
+
+    #[test]
+    fn parse_push_event_extracts_branch_and_sha_without_reply_target() {
+        let payload = serde_json::json!({
+            "repository": { "full_name": "o/r" },
+            "organization": { "login": "o" },
+            "sender": { "login": "u" },
+            "ref": "refs/heads/main",
+            "after": "abcdef1234567890",
+            "deleted": false,
+            "head_commit": { "message": "/codex inspect crash" }
+        });
+        let item = parse_work_item("push", &payload, "/codex")
+            .unwrap()
+            .unwrap();
+        assert_eq!(item.source, WebhookSource::Organization);
+        assert_eq!(item.work.kind, WorkKind::Push);
+        assert_eq!(item.prompt, "inspect crash");
+        assert_eq!(item.display_target, "main@abcdef1");
+        assert_eq!(item.push_ref.as_deref(), Some("main"));
+        assert_eq!(item.push_after.as_deref(), Some("abcdef1234567890"));
+        assert!(matches!(item.response_target, ResponseTarget::None));
+    }
+
+    #[test]
+    fn parse_push_event_ignores_deleted_push() {
+        let payload = serde_json::json!({
+            "repository": { "full_name": "o/r" },
+            "sender": { "login": "u" },
+            "ref": "refs/heads/main",
+            "after": "abcdef1234567890",
+            "deleted": true,
+            "head_commit": { "message": "/codex inspect crash" }
+        });
+        let item = parse_work_item("unknown_event", &payload, "/codex").unwrap();
+        assert_eq!(item.is_none(), true);
+    }
+
+    #[test]
+    fn parse_issue_event_uses_issue_body_prefix() {
+        let payload = serde_json::json!({
+            "action": "opened",
+            "repository": { "full_name": "o/r" },
+            "sender": { "login": "u" },
+            "issue": { "number": 11, "body": "/codex investigate" }
+        });
+        let item = parse_work_item("issues", &payload, "/codex")
+            .unwrap()
+            .unwrap();
+        assert_eq!(item.work.kind, WorkKind::Issue);
+        assert_eq!(item.work.number, 11);
+        assert_eq!(item.prompt, "investigate");
+        assert_eq!(item.display_target, "#11");
+        match item.response_target {
+            ResponseTarget::IssueComment { issue_number } => assert_eq!(issue_number, 11),
+            other => panic!("unexpected response target: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_pull_request_event_uses_pr_body_prefix() {
+        let payload = serde_json::json!({
+            "action": "edited",
+            "repository": { "full_name": "o/r" },
+            "sender": { "login": "u" },
+            "number": 23,
+            "pull_request": { "number": 23, "body": "/codex refresh this" }
+        });
+        let item = parse_work_item("pull_request", &payload, "/codex")
+            .unwrap()
+            .unwrap();
+        assert_eq!(item.work.kind, WorkKind::Pull);
+        assert_eq!(item.work.number, 23);
+        assert_eq!(item.prompt, "refresh this");
+        assert_eq!(item.display_target, "#23");
+        match item.response_target {
+            ResponseTarget::IssueComment { issue_number } => assert_eq!(issue_number, 23),
+            other => panic!("unexpected response target: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_push_event_extracts_branch_and_disables_reply_target() {
+        let payload = serde_json::json!({
+            "repository": { "full_name": "o/r" },
+            "sender": { "login": "u" },
+            "ref": "refs/heads/main",
+            "after": "0123456789abcdef0123456789abcdef01234567",
+            "head_commit": { "message": "/codex inspect push" }
+        });
+        let item = parse_work_item("push", &payload, "/codex")
+            .unwrap()
+            .unwrap();
+        assert_eq!(item.work.kind, WorkKind::Push);
+        assert_eq!(item.prompt, "inspect push");
+        assert_eq!(item.push_ref.as_deref(), Some("main"));
+        assert_eq!(
+            item.push_after.as_deref(),
+            Some("0123456789abcdef0123456789abcdef01234567")
+        );
+        assert!(matches!(item.response_target, ResponseTarget::None));
+    }
+
+    #[test]
     fn parse_work_item_ignores_unknown_event_without_repo_fields() {
         let payload = serde_json::json!({ "some": "thing" });
-        let item = parse_work_item("push", &payload, "/codex").unwrap();
+        let item = parse_work_item("unknown_event", &payload, "/codex").unwrap();
         assert_eq!(item.is_none(), true);
     }
 
@@ -2684,14 +4017,17 @@ mod tests {
         drop(listener);
 
         let cmd = GithubCommand {
-            listen: addr,
-            webhook_secret_env: DEFAULT_WEBHOOK_SECRET_ENV.to_string(),
-            github_token_env: DEFAULT_GITHUB_TOKEN_ENV.to_string(),
-            min_permission: MinPermission::Triage,
+            listen: Some(addr),
+            webhook_secret_env: Some(DEFAULT_WEBHOOK_SECRET_ENV.to_string()),
+            github_token_env: Some(DEFAULT_GITHUB_TOKEN_ENV.to_string()),
+            github_app_id_env: None,
+            github_app_private_key_env: None,
+            auth_mode: None,
+            min_permission: Some(MinPermission::Triage),
             allow_repo: Vec::new(),
-            command_prefix: DEFAULT_COMMAND_PREFIX.to_string(),
-            delivery_ttl_days: 0,
-            repo_ttl_days: 0,
+            command_prefix: Some(DEFAULT_COMMAND_PREFIX.to_string()),
+            delivery_ttl_days: Some(0),
+            repo_ttl_days: Some(0),
         };
 
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
@@ -2735,14 +4071,17 @@ mod tests {
         drop(listener);
 
         let cmd = GithubCommand {
-            listen: addr,
-            webhook_secret_env: DEFAULT_WEBHOOK_SECRET_ENV.to_string(),
-            github_token_env: DEFAULT_GITHUB_TOKEN_ENV.to_string(),
-            min_permission: MinPermission::Triage,
+            listen: Some(addr),
+            webhook_secret_env: Some(DEFAULT_WEBHOOK_SECRET_ENV.to_string()),
+            github_token_env: Some(DEFAULT_GITHUB_TOKEN_ENV.to_string()),
+            github_app_id_env: None,
+            github_app_private_key_env: None,
+            auth_mode: None,
+            min_permission: Some(MinPermission::Triage),
             allow_repo: Vec::new(),
-            command_prefix: DEFAULT_COMMAND_PREFIX.to_string(),
-            delivery_ttl_days: 1,
-            repo_ttl_days: 0,
+            command_prefix: Some(DEFAULT_COMMAND_PREFIX.to_string()),
+            delivery_ttl_days: Some(1),
+            repo_ttl_days: Some(0),
         };
 
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
@@ -2782,14 +4121,17 @@ mod tests {
         }
 
         let cmd = GithubCommand {
-            listen: DEFAULT_LISTEN_ADDR.parse().unwrap(),
-            webhook_secret_env: DEFAULT_WEBHOOK_SECRET_ENV.to_string(),
-            github_token_env: DEFAULT_GITHUB_TOKEN_ENV.to_string(),
-            min_permission: MinPermission::Triage,
+            listen: Some(DEFAULT_LISTEN_ADDR.parse().unwrap()),
+            webhook_secret_env: Some(DEFAULT_WEBHOOK_SECRET_ENV.to_string()),
+            github_token_env: Some(DEFAULT_GITHUB_TOKEN_ENV.to_string()),
+            github_app_id_env: None,
+            github_app_private_key_env: None,
+            auth_mode: None,
+            min_permission: Some(MinPermission::Triage),
             allow_repo: Vec::new(),
-            command_prefix: DEFAULT_COMMAND_PREFIX.to_string(),
-            delivery_ttl_days: 0,
-            repo_ttl_days: 0,
+            command_prefix: Some(DEFAULT_COMMAND_PREFIX.to_string()),
+            delivery_ttl_days: Some(0),
+            repo_ttl_days: Some(0),
         };
 
         let err = run_main_with_shutdown(cmd, CliConfigOverrides::default(), async {})
@@ -2809,20 +4151,247 @@ mod tests {
         ]);
 
         let cmd = GithubCommand {
-            listen: DEFAULT_LISTEN_ADDR.parse().unwrap(),
-            webhook_secret_env: DEFAULT_WEBHOOK_SECRET_ENV.to_string(),
-            github_token_env: DEFAULT_GITHUB_TOKEN_ENV.to_string(),
-            min_permission: MinPermission::Triage,
+            listen: Some(DEFAULT_LISTEN_ADDR.parse().unwrap()),
+            webhook_secret_env: Some(DEFAULT_WEBHOOK_SECRET_ENV.to_string()),
+            github_token_env: Some(DEFAULT_GITHUB_TOKEN_ENV.to_string()),
+            github_app_id_env: None,
+            github_app_private_key_env: None,
+            auth_mode: None,
+            min_permission: Some(MinPermission::Triage),
             allow_repo: Vec::new(),
-            command_prefix: DEFAULT_COMMAND_PREFIX.to_string(),
-            delivery_ttl_days: 0,
-            repo_ttl_days: 0,
+            command_prefix: Some(DEFAULT_COMMAND_PREFIX.to_string()),
+            delivery_ttl_days: Some(0),
+            repo_ttl_days: Some(0),
         };
 
         let err = run_main_with_shutdown(cmd, CliConfigOverrides::default(), async {})
             .await
             .unwrap_err();
         assert!(format!("{err:#}").contains("is empty"));
+    }
+
+    #[tokio::test]
+    async fn resolve_github_access_token_mode_uses_configured_base_url() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = AppState {
+            secret: Arc::new(b"sekrit".to_vec()),
+            github_api_base_url: Arc::new("http://example.test".to_string()),
+            github_auth: Arc::new(GithubAuthConfig {
+                mode: GithubWebhookAuthModeToml::Token,
+                static_token: Arc::new("static-token".to_string()),
+                app: None,
+            }),
+            allow_repos: Arc::new(HashSet::new()),
+            enabled_sources: test_enabled_sources(),
+            enabled_events: EnabledEvents::expanded_default(),
+            min_permission: MinPermission::Triage,
+            command_prefix: Arc::new("/codex".to_string()),
+            repo_root: Arc::new(temp.path().join("repos")),
+            codex_bin: Arc::new(PathBuf::from("codex")),
+            codex_config_overrides: Arc::new(Vec::new()),
+            delivery_markers_dir: Arc::new(temp.path().join("deliveries")),
+            thread_state_dir: Arc::new(temp.path().join("threads")),
+            delivery_ttl: None,
+            repo_ttl: None,
+            concurrency_limit: Arc::new(Semaphore::new(1)),
+            work_locks: Arc::new(Mutex::new(HashMap::new())),
+            repo_locks: Arc::new(Mutex::new(HashMap::new())),
+        };
+        let item = WorkItem {
+            repo_full_name: "o/r".to_string(),
+            sender_login: "u".to_string(),
+            source: WebhookSource::Repo,
+            installation_id: None,
+            work: WorkKey {
+                owner: "o".to_string(),
+                repo: "r".to_string(),
+                kind: WorkKind::Issue,
+                number: 1,
+            },
+            prompt: "hi".to_string(),
+            display_target: "#1".to_string(),
+            push_ref: None,
+            push_after: None,
+            ack_target: AckTarget::None,
+            response_target: ResponseTarget::IssueComment { issue_number: 1 },
+        };
+
+        let access = resolve_github_access(&state, &item).await.unwrap();
+        assert_eq!(access.token, "static-token");
+        assert_eq!(access.github.base_url, "http://example.test");
+    }
+
+    #[tokio::test]
+    async fn resolve_github_access_auto_prefers_github_app_before_static_token() {
+        let app = Router::new()
+            .route(
+                "/repos/o/r/installation",
+                get(|| async { (StatusCode::OK, axum::Json(serde_json::json!({ "id": 42 }))) }),
+            )
+            .route(
+                "/app/installations/42/access_tokens",
+                post(|| async {
+                    (
+                        StatusCode::CREATED,
+                        axum::Json(serde_json::json!({ "token": "installation-token" })),
+                    )
+                }),
+            );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = spawn_test_server(listener, app);
+        let temp = tempfile::tempdir().unwrap();
+        let state = AppState {
+            secret: Arc::new(b"sekrit".to_vec()),
+            github_api_base_url: Arc::new(format!("http://{addr}")),
+            github_auth: Arc::new(GithubAuthConfig {
+                mode: GithubWebhookAuthModeToml::Auto,
+                static_token: Arc::new("static-token".to_string()),
+                app: Some(Arc::new(GithubAppCredentials {
+                    app_id: 123,
+                    private_key: Arc::new(
+                        r#"-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCwUHhCZWtS4iDx
+G5g0CPK46rHMmY/qQj/urDzJ1tAp3bkRWrCBZRBmZgqnJXw47aX87BpiI/8TIsch
+U3qMijsGeMgV6K/YPACkb5NHyUEdRr0xrje50HE6R7WwBNRqx+Xe+y5dn9UFuk+t
+oSxvSOHHIP+Eq9V/pOG/sr9Tf8w1qPt7S4d9I/dfMtGjiJienJiYjZ8iF5f40LwO
+1SIM6fygQzXmUky3qIqBmgXpX1LC90R0AG//SoN542GkA+IW/2DGTz1dQalKGuWi
+cwo+JTP8Af9KDn7xntnUyNmDsGPhbE3CgsypQa7AstFiW9JLjOgZoa/axCKQ/nNd
+uG8kwWdhAgMBAAECggEADNQ8HeOsip481KJkAaRFigY8u/UQA1UA+yRB85NLeAJj
+vxMk3PNuPS8vVwBroKZNIcFJvaqeGqW5DNAazotX1mWXNH3m/qJGDzD1q99lWySc
+q1bgg+caeAnD+vvs+1ySebY35lTVDprDBbCgr7PDRuacJQqOSUCFcxoF4STfRmen
+a+Z+XKIWfKnEzDAR92+ZOkgJS0kkNP/9TONeOvWTiOvxFfAf80xNBWffH+GrVB5r
+CeWE8DJOWC4o74FlblZ4gVvDWbGAJX/pyBSlGoHSbHh+vGzWnNwwHWnFwfYAzlap
+3M2Lk6k5UHo2lKaCumI1q6vanqYGFi7R1nS31dun+QKBgQDlRR+JQmCFYNDPTQdH
+4sQP+TGHuiXGNQba0lNqhO6op8AeSFcrTq+OXKSoplDOTO9BvrcRlCQsDgLqYASG
+LptTqAhhbUULEX8oXCsobCFmfqPbSVRAdjctirh+3TY0xaRF+Lsnzrgp/pWYyL33
++8ULS4Ff+5Hc20T+PX2qrBRPiQKBgQDE3s/ggi37XyDU9PmE/rufZdRhXZm15SSO
+d/I9S3MhpFKyDZDXekJEVPU6fOEFrU5crfEx0nxLYijko2xtvQ87WzUZO9gKdIsp
+pKlgT/m6KT3/4KyNdE8pKP5k7oVc47kmKyeT0x6MH1Cxx4goTp3OAhWj2qAhlSuD
+6h6bnRTLGQKBgQCm3Bzsl7uJtwGhrez7m4WYHoO2xXqSe6tGfMarAp5zbss6/uk6
+IqVQVgqcl5a93m5PCg9QouGEkpn6m/EO+0Kequ+WgKE8QfqqlBHw9GmGn+p/QSop
+VCAqbAiEhFjcJW++YR1NBn0wSxHzRT5FCh7JbqV1BrGM7KSU6InaOiz6CQKBgQCr
+cFjYaqT+RS4DJT3xCh97RKL5ExibJOt7wYpKxFyDTGTTNysN6iKw/Mb84ujWF8Co
+xrTGrUSeJOH1kTcILV6JUvjfe5S8LhdN8V2qSJrw+Z9LJ208Va/l6RP38xph9NE0
+Itp5SZ1NaqvL1TWF3EhhsMEFiopuFEfrvUJgQx9raQKBgHxjxj5xAHKiMWToavRN
+KagatZeUpmvfZ8Ov6vZ9Y0Fks32cMykAbxidS/+nIEEwz3Xzk19NM/ujYgwhpml1
+L0TEzz1ofIhomRKm+ThdWBno4czkXsSdPHDtc3RPxbdfP2ZYIgZBJEKdCj97bv64
+gM6+LiULCYzYqcuiuKsJk6lL
+-----END PRIVATE KEY-----"#
+                            .to_string(),
+                    ),
+                })),
+            }),
+            allow_repos: Arc::new(HashSet::new()),
+            enabled_sources: test_enabled_sources(),
+            enabled_events: EnabledEvents::expanded_default(),
+            min_permission: MinPermission::Triage,
+            command_prefix: Arc::new("/codex".to_string()),
+            repo_root: Arc::new(temp.path().join("repos")),
+            codex_bin: Arc::new(PathBuf::from("codex")),
+            codex_config_overrides: Arc::new(Vec::new()),
+            delivery_markers_dir: Arc::new(temp.path().join("deliveries")),
+            thread_state_dir: Arc::new(temp.path().join("threads")),
+            delivery_ttl: None,
+            repo_ttl: None,
+            concurrency_limit: Arc::new(Semaphore::new(1)),
+            work_locks: Arc::new(Mutex::new(HashMap::new())),
+            repo_locks: Arc::new(Mutex::new(HashMap::new())),
+        };
+        let item = WorkItem {
+            repo_full_name: "o/r".to_string(),
+            sender_login: "u".to_string(),
+            source: WebhookSource::Repo,
+            installation_id: None,
+            work: WorkKey {
+                owner: "o".to_string(),
+                repo: "r".to_string(),
+                kind: WorkKind::Issue,
+                number: 1,
+            },
+            prompt: "hi".to_string(),
+            display_target: "#1".to_string(),
+            push_ref: None,
+            push_after: None,
+            ack_target: AckTarget::None,
+            response_target: ResponseTarget::IssueComment { issue_number: 1 },
+        };
+
+        let access = resolve_github_access(&state, &item).await.unwrap();
+        assert_eq!(access.token, "installation-token");
+        assert_eq!(access.github.base_url, format!("http://{addr}"));
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn resolve_runtime_config_reads_github_webhook_table() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            temp.path().join("config.toml"),
+            r#"
+[github_webhook]
+enabled = true
+listen = "127.0.0.1:9898"
+webhook_secret_env = "ALT_WEBHOOK_SECRET"
+github_token_env = "ALT_GITHUB_TOKEN"
+auth_mode = "github-app"
+min_permission = "read"
+allow_repos = ["o/r"]
+command_prefix = "/bot"
+delivery_ttl_days = 3
+repo_ttl_days = 5
+sources = ["organization", "github-app"]
+
+[github_webhook.events]
+issue_comment = false
+issues = true
+pull_request = true
+pull_request_review = false
+pull_request_review_comment = true
+push = true
+"#,
+        )
+        .unwrap();
+
+        let cmd = GithubCommand {
+            listen: None,
+            webhook_secret_env: None,
+            github_token_env: None,
+            github_app_id_env: None,
+            github_app_private_key_env: None,
+            auth_mode: None,
+            min_permission: None,
+            allow_repo: Vec::new(),
+            command_prefix: None,
+            delivery_ttl_days: None,
+            repo_ttl_days: None,
+        };
+
+        let runtime = resolve_runtime_config(&cmd, &CliConfigOverrides::default(), temp.path())
+            .await
+            .unwrap();
+
+        assert_eq!(runtime.enabled, true);
+        assert_eq!(runtime.listen.to_string(), "127.0.0.1:9898");
+        assert_eq!(runtime.webhook_secret_env, "ALT_WEBHOOK_SECRET");
+        assert_eq!(runtime.github_token_env, "ALT_GITHUB_TOKEN");
+        assert_eq!(runtime.auth_mode, GithubWebhookAuthModeToml::GithubApp);
+        assert_eq!(runtime.min_permission, MinPermission::Read);
+        assert_eq!(runtime.allow_repo, vec!["o/r".to_string()]);
+        assert_eq!(runtime.command_prefix, "/bot");
+        assert_eq!(runtime.delivery_ttl_days, 3);
+        assert_eq!(runtime.repo_ttl_days, 5);
+        assert_eq!(
+            runtime.enabled_sources,
+            HashSet::from([WebhookSource::Organization, WebhookSource::GithubApp])
+        );
+        assert_eq!(runtime.enabled_events.issue_comment, false);
+        assert_eq!(runtime.enabled_events.issues, true);
+        assert_eq!(runtime.enabled_events.pull_request, true);
+        assert_eq!(runtime.enabled_events.pull_request_review, false);
+        assert_eq!(runtime.enabled_events.pull_request_review_comment, true);
+        assert_eq!(runtime.enabled_events.push, true);
     }
 
     #[tokio::test]
@@ -3532,9 +5101,11 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let state = AppState {
             secret: Arc::new(b"sekrit".to_vec()),
-            github: Arc::new(github),
-            github_token: Arc::new("t".to_string()),
+            github_api_base_url: Arc::new(github.base_url.clone()),
+            github_auth: test_github_auth("t"),
             allow_repos: Arc::new(HashSet::new()),
+            enabled_sources: test_enabled_sources(),
+            enabled_events: EnabledEvents::expanded_default(),
             min_permission: MinPermission::Triage,
             command_prefix: Arc::new("/codex".to_string()),
             repo_root: Arc::new(temp.path().join("repos")),
@@ -3585,9 +5156,11 @@ mod tests {
                 .unwrap();
         let state = AppState {
             secret: Arc::new(b"sekrit".to_vec()),
-            github: Arc::new(github),
-            github_token: Arc::new("t".to_string()),
+            github_api_base_url: Arc::new(github.base_url.clone()),
+            github_auth: test_github_auth("t"),
             allow_repos: Arc::new(HashSet::new()),
+            enabled_sources: test_enabled_sources(),
+            enabled_events: EnabledEvents::expanded_default(),
             min_permission: MinPermission::Triage,
             command_prefix: Arc::new("/codex".to_string()),
             repo_root: Arc::new(temp.path().join("repos")),
@@ -3625,15 +5198,37 @@ mod tests {
 
     #[tokio::test]
     async fn handle_webhook_returns_busy_before_permission_check() {
+        let posted_body = Arc::new(Mutex::new(String::new()));
+        let app = Router::new().route(
+            "/repos/o/r/issues/1/comments",
+            post({
+                let posted_body = Arc::clone(&posted_body);
+                move |axum::Json(v): axum::Json<Value>| {
+                    let posted_body = Arc::clone(&posted_body);
+                    async move {
+                        *posted_body.lock().await = v
+                            .get("body")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string();
+                        StatusCode::CREATED
+                    }
+                }
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = spawn_test_server(listener, app);
         let github =
-            GithubApi::new_with_base_url("t".to_string(), "http://example.invalid".to_string())
-                .unwrap();
+            GithubApi::new_with_base_url("t".to_string(), format!("http://{addr}")).unwrap();
         let temp = tempfile::tempdir().unwrap();
         let state = AppState {
             secret: Arc::new(b"sekrit".to_vec()),
-            github: Arc::new(github),
-            github_token: Arc::new("t".to_string()),
+            github_api_base_url: Arc::new(github.base_url.clone()),
+            github_auth: test_github_auth("t"),
             allow_repos: Arc::new(HashSet::new()),
+            enabled_sources: test_enabled_sources(),
+            enabled_events: EnabledEvents::expanded_default(),
             min_permission: MinPermission::Triage,
             command_prefix: Arc::new("/codex".to_string()),
             repo_root: Arc::new(temp.path().join("repos")),
@@ -3667,6 +5262,9 @@ mod tests {
             .await
             .into_response();
         assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(posted_body.lock().await.contains("busy"));
+
+        server.abort();
     }
 
     #[tokio::test]
@@ -3684,9 +5282,11 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let state = AppState {
             secret: Arc::new(b"sekrit".to_vec()),
-            github: Arc::new(github),
-            github_token: Arc::new("t".to_string()),
+            github_api_base_url: Arc::new(github.base_url.clone()),
+            github_auth: test_github_auth("t"),
             allow_repos: Arc::new(HashSet::new()),
+            enabled_sources: test_enabled_sources(),
+            enabled_events: EnabledEvents::expanded_default(),
             min_permission: MinPermission::Triage,
             command_prefix: Arc::new("/codex".to_string()),
             repo_root: Arc::new(temp.path().join("repos")),
@@ -3732,9 +5332,11 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let state = AppState {
             secret: Arc::new(b"sekrit".to_vec()),
-            github: Arc::new(github),
-            github_token: Arc::new("t".to_string()),
+            github_api_base_url: Arc::new(github.base_url.clone()),
+            github_auth: test_github_auth("t"),
             allow_repos: Arc::new(HashSet::new()),
+            enabled_sources: test_enabled_sources(),
+            enabled_events: EnabledEvents::expanded_default(),
             min_permission: MinPermission::Triage,
             command_prefix: Arc::new("/codex".to_string()),
             repo_root: Arc::new(temp.path().join("repos")),
@@ -3759,6 +5361,12 @@ mod tests {
                 number: 1,
             },
             prompt: "hi".to_string(),
+            source: WebhookSource::Repo,
+            installation_id: None,
+            display_target: "test".to_string(),
+            push_ref: None,
+            push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::IssueComment { issue_number: 1 },
         };
 
@@ -3785,9 +5393,11 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let state = AppState {
             secret: Arc::new(b"sekrit".to_vec()),
-            github: Arc::new(github),
-            github_token: Arc::new("t".to_string()),
+            github_api_base_url: Arc::new(github.base_url.clone()),
+            github_auth: test_github_auth("t"),
             allow_repos: Arc::new(HashSet::new()),
+            enabled_sources: test_enabled_sources(),
+            enabled_events: EnabledEvents::expanded_default(),
             min_permission: MinPermission::Triage,
             command_prefix: Arc::new("/codex".to_string()),
             repo_root: Arc::new(temp.path().join("repos")),
@@ -3812,6 +5422,12 @@ mod tests {
                 number: 1,
             },
             prompt: "hi".to_string(),
+            source: WebhookSource::Repo,
+            installation_id: None,
+            display_target: "test".to_string(),
+            push_ref: None,
+            push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::IssueComment { issue_number: 1 },
         };
 
@@ -4219,9 +5835,11 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let state = AppState {
             secret: Arc::new(b"sekrit".to_vec()),
-            github: Arc::new(github),
-            github_token: Arc::new("t".to_string()),
+            github_api_base_url: Arc::new(github.base_url.clone()),
+            github_auth: test_github_auth("t"),
             allow_repos: Arc::new(HashSet::new()),
+            enabled_sources: test_enabled_sources(),
+            enabled_events: EnabledEvents::expanded_default(),
             min_permission: MinPermission::Triage,
             command_prefix: Arc::new("/codex".to_string()),
             repo_root: Arc::new(temp.path().join("repos")),
@@ -4600,9 +6218,11 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let state = AppState {
             secret: Arc::new(b"sekrit".to_vec()),
-            github: Arc::new(github),
-            github_token: Arc::new("t".to_string()),
+            github_api_base_url: Arc::new(github.base_url.clone()),
+            github_auth: test_github_auth("t"),
             allow_repos: Arc::new(HashSet::new()),
+            enabled_sources: test_enabled_sources(),
+            enabled_events: EnabledEvents::expanded_default(),
             min_permission: MinPermission::Triage,
             command_prefix: Arc::new("/codex".to_string()),
             repo_root: Arc::new(temp.path().join("repos")),
@@ -4627,6 +6247,12 @@ mod tests {
                 number: 1,
             },
             prompt: "x".to_string(),
+            source: WebhookSource::Repo,
+            installation_id: None,
+            display_target: "test".to_string(),
+            push_ref: None,
+            push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::IssueComment { issue_number: 1 },
         };
         post_success(&state, &issue_item, "m1").await.unwrap();
@@ -4642,6 +6268,12 @@ mod tests {
                 number: 7,
             },
             prompt: "x".to_string(),
+            source: WebhookSource::Repo,
+            installation_id: None,
+            display_target: "test".to_string(),
+            push_ref: None,
+            push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::ReviewCommentReply { comment_id: 123 },
         };
         post_success(&state, &reply_item, "m2").await.unwrap();
@@ -4657,6 +6289,12 @@ mod tests {
                 number: 7,
             },
             prompt: "x".to_string(),
+            source: WebhookSource::Repo,
+            installation_id: None,
+            display_target: "test".to_string(),
+            push_ref: None,
+            push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::PullRequestReview { pull_number: 7 },
         };
         post_success(&state, &review_item, "m3").await.unwrap();
@@ -4715,9 +6353,11 @@ mod tests {
 
         let state = AppState {
             secret: Arc::new(b"sekrit".to_vec()),
-            github: Arc::new(github),
-            github_token: Arc::new("t".to_string()),
+            github_api_base_url: Arc::new(github.base_url.clone()),
+            github_auth: test_github_auth("t"),
             allow_repos: Arc::new(HashSet::new()),
+            enabled_sources: test_enabled_sources(),
+            enabled_events: EnabledEvents::expanded_default(),
             min_permission: MinPermission::Triage,
             command_prefix: Arc::new("/codex".to_string()),
             repo_root: Arc::new(repo_root),
@@ -4742,6 +6382,12 @@ mod tests {
                 number: 1,
             },
             prompt: "do the thing".to_string(),
+            source: WebhookSource::Repo,
+            installation_id: None,
+            display_target: "test".to_string(),
+            push_ref: None,
+            push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::IssueComment { issue_number: 1 },
         };
 
@@ -4753,6 +6399,176 @@ mod tests {
             .unwrap();
         process_work_item(state, item, permit).await;
         assert!(posted_body.lock().await.contains("codex github failed"));
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn post_ack_reacts_to_issue_comment_when_available() {
+        let reaction_calls = Arc::new(AtomicUsize::new(0));
+        let comment_calls = Arc::new(AtomicUsize::new(0));
+        let reaction_body = Arc::new(Mutex::new(String::new()));
+        let app = Router::new()
+            .route(
+                "/repos/o/r/issues/comments/99/reactions",
+                post({
+                    let reaction_calls = Arc::clone(&reaction_calls);
+                    let reaction_body = Arc::clone(&reaction_body);
+                    move |axum::Json(v): axum::Json<Value>| {
+                        let reaction_calls = Arc::clone(&reaction_calls);
+                        let reaction_body = Arc::clone(&reaction_body);
+                        async move {
+                            reaction_calls.fetch_add(1, Ordering::SeqCst);
+                            *reaction_body.lock().await = v
+                                .get("content")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_string();
+                            StatusCode::CREATED
+                        }
+                    }
+                }),
+            )
+            .route(
+                "/repos/o/r/issues/1/comments",
+                post({
+                    let comment_calls = Arc::clone(&comment_calls);
+                    move || {
+                        let comment_calls = Arc::clone(&comment_calls);
+                        async move {
+                            comment_calls.fetch_add(1, Ordering::SeqCst);
+                            StatusCode::CREATED
+                        }
+                    }
+                }),
+            );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = spawn_test_server(listener, app);
+
+        let github =
+            GithubApi::new_with_base_url("t".to_string(), format!("http://{addr}")).unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let state = AppState {
+            secret: Arc::new(b"sekrit".to_vec()),
+            github_api_base_url: Arc::new(github.base_url.clone()),
+            github_auth: test_github_auth("t"),
+            allow_repos: Arc::new(HashSet::new()),
+            enabled_sources: test_enabled_sources(),
+            enabled_events: EnabledEvents::expanded_default(),
+            min_permission: MinPermission::Triage,
+            command_prefix: Arc::new("/codex".to_string()),
+            repo_root: Arc::new(temp.path().join("repos")),
+            codex_bin: Arc::new(PathBuf::from("codex")),
+            codex_config_overrides: Arc::new(Vec::new()),
+            delivery_markers_dir: Arc::new(temp.path().join("deliveries")),
+            thread_state_dir: Arc::new(temp.path().join("threads")),
+            delivery_ttl: None,
+            repo_ttl: None,
+            concurrency_limit: Arc::new(Semaphore::new(1)),
+            work_locks: Arc::new(Mutex::new(HashMap::new())),
+            repo_locks: Arc::new(Mutex::new(HashMap::new())),
+        };
+        let item = WorkItem {
+            repo_full_name: "o/r".to_string(),
+            sender_login: "u".to_string(),
+            work: WorkKey {
+                owner: "o".to_string(),
+                repo: "r".to_string(),
+                kind: WorkKind::Issue,
+                number: 1,
+            },
+            prompt: "x".to_string(),
+            source: WebhookSource::Repo,
+            installation_id: None,
+            display_target: "test".to_string(),
+            push_ref: None,
+            push_after: None,
+            ack_target: AckTarget::IssueComment { comment_id: 99 },
+            response_target: ResponseTarget::IssueComment { issue_number: 1 },
+        };
+
+        post_ack(&state, &item).await.unwrap();
+        assert_eq!(reaction_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(comment_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(reaction_body.lock().await.as_str(), ACKNOWLEDGMENT_REACTION);
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn post_ack_falls_back_to_comment_when_reaction_fails() {
+        let comment_body = Arc::new(Mutex::new(String::new()));
+        let app = Router::new()
+            .route(
+                "/repos/o/r/issues/comments/99/reactions",
+                post(|| async { (StatusCode::INTERNAL_SERVER_ERROR, "no") }),
+            )
+            .route(
+                "/repos/o/r/issues/1/comments",
+                post({
+                    let comment_body = Arc::clone(&comment_body);
+                    move |axum::Json(v): axum::Json<Value>| {
+                        let comment_body = Arc::clone(&comment_body);
+                        async move {
+                            *comment_body.lock().await = v
+                                .get("body")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_string();
+                            StatusCode::CREATED
+                        }
+                    }
+                }),
+            );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = spawn_test_server(listener, app);
+
+        let github =
+            GithubApi::new_with_base_url("t".to_string(), format!("http://{addr}")).unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let state = AppState {
+            secret: Arc::new(b"sekrit".to_vec()),
+            github_api_base_url: Arc::new(github.base_url.clone()),
+            github_auth: test_github_auth("t"),
+            allow_repos: Arc::new(HashSet::new()),
+            enabled_sources: test_enabled_sources(),
+            enabled_events: EnabledEvents::expanded_default(),
+            min_permission: MinPermission::Triage,
+            command_prefix: Arc::new("/codex".to_string()),
+            repo_root: Arc::new(temp.path().join("repos")),
+            codex_bin: Arc::new(PathBuf::from("codex")),
+            codex_config_overrides: Arc::new(Vec::new()),
+            delivery_markers_dir: Arc::new(temp.path().join("deliveries")),
+            thread_state_dir: Arc::new(temp.path().join("threads")),
+            delivery_ttl: None,
+            repo_ttl: None,
+            concurrency_limit: Arc::new(Semaphore::new(1)),
+            work_locks: Arc::new(Mutex::new(HashMap::new())),
+            repo_locks: Arc::new(Mutex::new(HashMap::new())),
+        };
+        let item = WorkItem {
+            repo_full_name: "o/r".to_string(),
+            sender_login: "u".to_string(),
+            work: WorkKey {
+                owner: "o".to_string(),
+                repo: "r".to_string(),
+                kind: WorkKind::Issue,
+                number: 1,
+            },
+            prompt: "x".to_string(),
+            source: WebhookSource::Repo,
+            installation_id: None,
+            display_target: "test".to_string(),
+            push_ref: None,
+            push_after: None,
+            ack_target: AckTarget::IssueComment { comment_id: 99 },
+            response_target: ResponseTarget::IssueComment { issue_number: 1 },
+        };
+
+        post_ack(&state, &item).await.unwrap();
+        assert_eq!(comment_body.lock().await.as_str(), ACKNOWLEDGMENT_MESSAGE);
 
         server.abort();
     }
@@ -4782,9 +6598,11 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let state = AppState {
             secret: Arc::new(b"sekrit".to_vec()),
-            github: Arc::new(github),
-            github_token: Arc::new("t".to_string()),
+            github_api_base_url: Arc::new(github.base_url.clone()),
+            github_auth: test_github_auth("t"),
             allow_repos: Arc::new(HashSet::new()),
+            enabled_sources: test_enabled_sources(),
+            enabled_events: EnabledEvents::expanded_default(),
             min_permission: MinPermission::Triage,
             command_prefix: Arc::new("/codex".to_string()),
             repo_root: Arc::new(temp.path().join("repos")),
@@ -4809,6 +6627,12 @@ mod tests {
                 number: 1,
             },
             prompt: "x".to_string(),
+            source: WebhookSource::Repo,
+            installation_id: None,
+            display_target: "test".to_string(),
+            push_ref: None,
+            push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::IssueComment { issue_number: 1 },
         };
         assert!(post_success(&state, &issue_item, "m1").await.is_err());
@@ -4823,6 +6647,12 @@ mod tests {
                 number: 7,
             },
             prompt: "x".to_string(),
+            source: WebhookSource::Repo,
+            installation_id: None,
+            display_target: "test".to_string(),
+            push_ref: None,
+            push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::ReviewCommentReply { comment_id: 123 },
         };
         assert!(post_success(&state, &reply_item, "m2").await.is_err());
@@ -4837,6 +6667,12 @@ mod tests {
                 number: 7,
             },
             prompt: "x".to_string(),
+            source: WebhookSource::Repo,
+            installation_id: None,
+            display_target: "test".to_string(),
+            push_ref: None,
+            push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::PullRequestReview { pull_number: 7 },
         };
         assert!(post_success(&state, &review_item, "m3").await.is_err());
@@ -4895,9 +6731,11 @@ mod tests {
 
         let state = AppState {
             secret: Arc::new(b"sekrit".to_vec()),
-            github: Arc::new(github),
-            github_token: Arc::new("t".to_string()),
+            github_api_base_url: Arc::new(github.base_url.clone()),
+            github_auth: test_github_auth("t"),
             allow_repos: Arc::new(HashSet::new()),
+            enabled_sources: test_enabled_sources(),
+            enabled_events: EnabledEvents::expanded_default(),
             min_permission: MinPermission::Triage,
             command_prefix: Arc::new("/codex".to_string()),
             repo_root: Arc::new(temp.path().join("repos")),
@@ -4922,6 +6760,12 @@ mod tests {
                 number: 1,
             },
             prompt: "do the thing".to_string(),
+            source: WebhookSource::Repo,
+            installation_id: None,
+            display_target: "test".to_string(),
+            push_ref: None,
+            push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::IssueComment { issue_number: 1 },
         };
 
@@ -4994,9 +6838,11 @@ mod tests {
 
         let state = AppState {
             secret: Arc::new(b"sekrit".to_vec()),
-            github: Arc::new(github),
-            github_token: Arc::new("t".to_string()),
+            github_api_base_url: Arc::new(github.base_url.clone()),
+            github_auth: test_github_auth("t"),
             allow_repos: Arc::new(HashSet::new()),
+            enabled_sources: test_enabled_sources(),
+            enabled_events: EnabledEvents::expanded_default(),
             min_permission: MinPermission::Triage,
             command_prefix: Arc::new("/codex".to_string()),
             repo_root: Arc::new(temp.path().join("repos")),
@@ -5021,6 +6867,12 @@ mod tests {
                 number: 1,
             },
             prompt: "do the thing".to_string(),
+            source: WebhookSource::Repo,
+            installation_id: None,
+            display_target: "test".to_string(),
+            push_ref: None,
+            push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::IssueComment { issue_number: 1 },
         };
 
@@ -5067,9 +6919,11 @@ mod tests {
 
         let state = AppState {
             secret: Arc::new(b"sekrit".to_vec()),
-            github: Arc::new(github),
-            github_token: Arc::new("t".to_string()),
+            github_api_base_url: Arc::new(github.base_url.clone()),
+            github_auth: test_github_auth("t"),
             allow_repos: Arc::new(HashSet::new()),
+            enabled_sources: test_enabled_sources(),
+            enabled_events: EnabledEvents::expanded_default(),
             min_permission: MinPermission::Triage,
             command_prefix: Arc::new("/codex".to_string()),
             repo_root: Arc::new(temp.path().join("repos")),
@@ -5094,6 +6948,12 @@ mod tests {
                 number: 1,
             },
             prompt: "do it".to_string(),
+            source: WebhookSource::Repo,
+            installation_id: None,
+            display_target: "test".to_string(),
+            push_ref: None,
+            push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::IssueComment { issue_number: 1 },
         };
 
@@ -5181,9 +7041,11 @@ mod tests {
 
         let state = AppState {
             secret: Arc::new(b"sekrit".to_vec()),
-            github: Arc::new(github),
-            github_token: Arc::new("t".to_string()),
+            github_api_base_url: Arc::new(github.base_url.clone()),
+            github_auth: test_github_auth("t"),
             allow_repos: Arc::new(HashSet::new()),
+            enabled_sources: test_enabled_sources(),
+            enabled_events: EnabledEvents::expanded_default(),
             min_permission: MinPermission::Triage,
             command_prefix: Arc::new("/codex".to_string()),
             repo_root: Arc::new(temp.path().join("repos")),
@@ -5208,6 +7070,12 @@ mod tests {
                 number: 1,
             },
             prompt: "do it".to_string(),
+            source: WebhookSource::Repo,
+            installation_id: None,
+            display_target: "test".to_string(),
+            push_ref: None,
+            push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::IssueComment { issue_number: 1 },
         };
 
@@ -5245,9 +7113,11 @@ mod tests {
         let missing = temp.path().join("missing-codex");
         let state = AppState {
             secret: Arc::new(b"sekrit".to_vec()),
-            github: Arc::new(github),
-            github_token: Arc::new("t".to_string()),
+            github_api_base_url: Arc::new(github.base_url.clone()),
+            github_auth: test_github_auth("t"),
             allow_repos: Arc::new(HashSet::new()),
+            enabled_sources: test_enabled_sources(),
+            enabled_events: EnabledEvents::expanded_default(),
             min_permission: MinPermission::Triage,
             command_prefix: Arc::new("/codex".to_string()),
             repo_root: Arc::new(temp.path().join("repos")),
@@ -5272,6 +7142,12 @@ mod tests {
                 number: 1,
             },
             prompt: "do it".to_string(),
+            source: WebhookSource::Repo,
+            installation_id: None,
+            display_target: "test".to_string(),
+            push_ref: None,
+            push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::IssueComment { issue_number: 1 },
         };
 
@@ -5296,9 +7172,11 @@ mod tests {
 
         let state = AppState {
             secret: Arc::new(b"sekrit".to_vec()),
-            github: Arc::new(github),
-            github_token: Arc::new("t".to_string()),
+            github_api_base_url: Arc::new(github.base_url.clone()),
+            github_auth: test_github_auth("t"),
             allow_repos: Arc::new(HashSet::new()),
+            enabled_sources: test_enabled_sources(),
+            enabled_events: EnabledEvents::expanded_default(),
             min_permission: MinPermission::Triage,
             command_prefix: Arc::new("/codex".to_string()),
             repo_root: Arc::new(temp.path().join("repos")),
@@ -5323,6 +7201,12 @@ mod tests {
                 number: 1,
             },
             prompt: "do it".to_string(),
+            source: WebhookSource::Repo,
+            installation_id: None,
+            display_target: "test".to_string(),
+            push_ref: None,
+            push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::IssueComment { issue_number: 1 },
         };
 
@@ -5347,9 +7231,11 @@ mod tests {
 
         let state = AppState {
             secret: Arc::new(b"sekrit".to_vec()),
-            github: Arc::new(github),
-            github_token: Arc::new("t".to_string()),
+            github_api_base_url: Arc::new(github.base_url.clone()),
+            github_auth: test_github_auth("t"),
             allow_repos: Arc::new(HashSet::new()),
+            enabled_sources: test_enabled_sources(),
+            enabled_events: EnabledEvents::expanded_default(),
             min_permission: MinPermission::Triage,
             command_prefix: Arc::new("/codex".to_string()),
             repo_root: Arc::new(temp.path().join("repos")),
@@ -5374,6 +7260,12 @@ mod tests {
                 number: 1,
             },
             prompt: "do it".to_string(),
+            source: WebhookSource::Repo,
+            installation_id: None,
+            display_target: "test".to_string(),
+            push_ref: None,
+            push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::IssueComment { issue_number: 1 },
         };
 
@@ -5404,9 +7296,11 @@ mod tests {
 
         let state = AppState {
             secret: Arc::new(b"sekrit".to_vec()),
-            github: Arc::new(github),
-            github_token: Arc::new("t".to_string()),
+            github_api_base_url: Arc::new(github.base_url.clone()),
+            github_auth: test_github_auth("t"),
             allow_repos: Arc::new(HashSet::new()),
+            enabled_sources: test_enabled_sources(),
+            enabled_events: EnabledEvents::expanded_default(),
             min_permission: MinPermission::Triage,
             command_prefix: Arc::new("/codex".to_string()),
             repo_root: Arc::new(temp.path().join("repos")),
@@ -5431,6 +7325,12 @@ mod tests {
                 number: 1,
             },
             prompt: "do it".to_string(),
+            source: WebhookSource::Repo,
+            installation_id: None,
+            display_target: "test".to_string(),
+            push_ref: None,
+            push_after: None,
+            ack_target: AckTarget::None,
             response_target: ResponseTarget::IssueComment { issue_number: 1 },
         };
 
@@ -5445,9 +7345,11 @@ mod tests {
     #[tokio::test]
     async fn handle_webhook_processes_issue_comment_end_to_end() {
         let post_calls = Arc::new(AtomicUsize::new(0));
+        let reaction_calls = Arc::new(AtomicUsize::new(0));
         let posted_body = Arc::new(tokio::sync::Mutex::new(String::new()));
         let app = {
             let post_calls = Arc::clone(&post_calls);
+            let reaction_calls = Arc::clone(&reaction_calls);
             let posted_body = Arc::clone(&posted_body);
             Router::new()
                 .route(
@@ -5491,6 +7393,20 @@ mod tests {
                         },
                     ),
                 )
+                .route(
+                    "/repos/o/r/issues/comments/99/reactions",
+                    post(move |axum::Json(v): axum::Json<Value>| {
+                        let reaction_calls = Arc::clone(&reaction_calls);
+                        async move {
+                            reaction_calls.fetch_add(1, Ordering::SeqCst);
+                            assert_eq!(
+                                v.get("content").and_then(Value::as_str),
+                                Some(ACKNOWLEDGMENT_REACTION)
+                            );
+                            StatusCode::CREATED
+                        }
+                    }),
+                )
         };
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -5526,9 +7442,11 @@ mod tests {
 
         let state = AppState {
             secret: Arc::new(b"sekrit".to_vec()),
-            github: Arc::new(github),
-            github_token: Arc::new("t".to_string()),
+            github_api_base_url: Arc::new(github.base_url.clone()),
+            github_auth: test_github_auth("t"),
             allow_repos: Arc::new(HashSet::new()),
+            enabled_sources: test_enabled_sources(),
+            enabled_events: EnabledEvents::expanded_default(),
             min_permission: MinPermission::Triage,
             command_prefix: Arc::new("/codex".to_string()),
             repo_root: Arc::new(repo_root),
@@ -5548,7 +7466,7 @@ mod tests {
             "repository": { "full_name": "o/r" },
             "sender": { "login": "u" },
             "issue": { "number": 1 },
-            "comment": { "body": "/codex do the thing" }
+            "comment": { "id": 99, "body": "/codex do the thing" }
         });
         let body = serde_json::to_vec(&payload).unwrap();
         let header = signature_header(b"sekrit", &body);
@@ -5585,6 +7503,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(post_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(reaction_calls.load(Ordering::SeqCst), 1);
         assert_eq!(posted_body.lock().await.as_str(), "ok");
 
         let context = tokio::fs::read_to_string(work_dir.join(GITHUB_CONTEXT_FILENAME))

@@ -56,31 +56,16 @@ See `codex-rs/tui/styles.md`.
 
 ### Text wrapping
 
-- Always use textwrap::wrap to wrap plain strings.
-- If you have a ratatui Line and you want to wrap it, use the helpers in tui/src/wrapping.rs, e.g. word_wrap_lines / word_wrap_line.
-- If you need to indent wrapped lines, use the initial_indent / subsequent_indent options from RtOptions if you can, rather than writing custom logic.
-- If you have a list of lines and you need to prefix them all with some prefix (optionally different on the first vs subsequent lines), use the `prefix_lines` helper from line_utils.
-
-## Tests
+- Use `textwrap::wrap` for plain strings.
+- If you need to wrap a `Line`, use helpers in `tui/src/wrapping.rs`, e.g. `word_wrap_line` / `word_wrap_lines` with `RtOptions`.
+- For indenting wrapped lines, prefer `initial_indent` / `subsequent_indent` on `RtOptions` instead of custom logic.
+- If you need to truncate a list of lines to a max height, prefer the file-local truncation helpers already used by that widget; there is no shared `truncate_lines` helper.
 
 ### Snapshot tests
 
-This repo uses snapshot tests (via `insta`), especially in `codex-rs/tui`, to validate rendered output.
-
-**Requirement:** any change that affects user-visible UI (including adding new UI) must include
-corresponding `insta` snapshot coverage (add a new snapshot test if one doesn't exist yet, or
-update the existing snapshot). Review and accept snapshot updates as part of the PR so UI impact
-is easy to review and future diffs stay visual.
-
-When UI or text output changes intentionally, update the snapshots as follows:
-
-- Run tests to generate any updated snapshots:
+- This repository uses snapshot tests (via `insta`) in `codex-rs/tui` to verify rendered output.
+- When intentionally changing rendered output, update snapshots with:
   - `cargo test -p codex-tui`
-- Check what’s pending:
-  - `cargo insta pending-snapshots -p codex-tui`
-- Review changes by reading the generated `*.snap.new` files directly in the repo, or preview a specific file:
-  - `cargo insta show -p codex-tui path/to/file.snap.new`
-- Only if you intend to accept all new snapshots in this crate, run:
   - `cargo insta accept -p codex-tui`
 
 If you don’t have the tool:
@@ -172,3 +157,10 @@ These guidelines apply to app-server protocol work in `codex-rs`, especially:
 - Validate with `cargo test -p codex-app-server-protocol`.
 - Avoid boilerplate tests that only assert experimental field markers for individual
   request fields in `common.rs`; rely on schema generation/tests and behavioral coverage instead.
+
+## GitHub Workflow Experiments
+
+- The stable current `codex github` behavior is documented in `codex-rs/docs/github-webhook.md`.
+- Experimental GitHub-triggered orchestration guidance lives in `docs/github-outcome-first-overlay.md`.
+- There is intentionally no active root `WORKFLOW.md` contract for GitHub orchestration in this repository yet.
+- Do not assume the experimental overlay describes current native `codex github` behavior unless the current session explicitly instructs the agent to use that overlay and references `docs/github-outcome-first-overlay.md`, or a higher-level orchestrator/runtime explicitly activates it with an equivalent instruction.

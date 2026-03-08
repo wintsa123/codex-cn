@@ -585,6 +585,104 @@
       },
       "type": "object"
     },
+    "GithubWebhookAuthModeToml": {
+      "enum": [
+        "auto",
+        "token",
+        "github-app"
+      ],
+      "type": "string"
+    },
+    "GithubWebhookEventsToml": {
+      "additionalProperties": false,
+      "properties": {
+        "issue_comment": {
+          "type": "boolean"
+        },
+        "issues": {
+          "type": "boolean"
+        },
+        "pull_request": {
+          "type": "boolean"
+        },
+        "pull_request_review": {
+          "type": "boolean"
+        },
+        "pull_request_review_comment": {
+          "type": "boolean"
+        },
+        "push": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "GithubWebhookSourceToml": {
+      "enum": [
+        "repo",
+        "organization",
+        "github-app"
+      ],
+      "type": "string"
+    },
+    "GithubWebhookToml": {
+      "additionalProperties": false,
+      "properties": {
+        "allow_repos": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "auth_mode": {
+          "$ref": "#/definitions/GithubWebhookAuthModeToml"
+        },
+        "command_prefix": {
+          "type": "string"
+        },
+        "delivery_ttl_days": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "events": {
+          "$ref": "#/definitions/GithubWebhookEventsToml"
+        },
+        "github_app_id_env": {
+          "type": "string"
+        },
+        "github_app_private_key_env": {
+          "type": "string"
+        },
+        "github_token_env": {
+          "type": "string"
+        },
+        "listen": {
+          "type": "string"
+        },
+        "min_permission": {
+          "type": "string"
+        },
+        "repo_ttl_days": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "sources": {
+          "items": {
+            "$ref": "#/definitions/GithubWebhookSourceToml"
+          },
+          "type": "array"
+        },
+        "webhook_secret_env": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "History": {
       "additionalProperties": false,
       "description": "Settings that govern if and what will be written to `~/.codex/history.jsonl`.",
@@ -1896,6 +1994,14 @@
       ],
       "default": null,
       "description": "Settings for ghost snapshots (used for undo)."
+    },
+    "github_webhook": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/GithubWebhookToml"
+        }
+      ],
+      "description": "Settings for the `codex github` webhook server."
     },
     "hide_agent_reasoning": {
       "description": "When set to `true`, `AgentReasoning` events will be hidden from the UI/output. Defaults to `false`.",

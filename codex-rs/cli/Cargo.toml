@@ -27,6 +27,7 @@ codex-app-server-test-client = { workspace = true }
 codex-arg0 = { workspace = true }
 codex-chatgpt = { workspace = true }
 codex-cloud-tasks = { path = "../cloud-tasks" }
+codex-utils-absolute-path = { workspace = true }
 codex-utils-cli = { workspace = true }
 codex-config = { workspace = true }
 codex-core = { workspace = true }
@@ -43,9 +44,11 @@ codex-stdio-to-uds = { workspace = true }
 codex-tui = { workspace = true }
 libc = { workspace = true }
 hmac = "0.12.1"
+jsonwebtoken = { workspace = true }
 owo-colors = { workspace = true }
 regex-lite = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 supports-color = { workspace = true }

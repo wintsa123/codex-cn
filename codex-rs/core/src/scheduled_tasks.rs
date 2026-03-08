@@ -181,9 +181,7 @@ impl ScheduledTasks {
                 .filter(|task| task.next_run_at <= now)
                 .min_by_key(|task| task.next_run_at)
                 .map(|task| task.id.clone());
-            let Some(due_id) = due_id else {
-                return None;
-            };
+            let due_id = due_id?;
 
             let Some(mut task) = tasks.remove(&due_id) else {
                 continue;

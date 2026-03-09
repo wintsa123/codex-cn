@@ -1,14 +1,14 @@
 {
-  "active_session": "019ccbd3-157d-79a3-a46d-56e56d44e96d",
+  "active_session": "019ccb6c-0f15-75d2-bf30-25cdf48c15b3",
   "stop_block_count": 0,
-  "last_stop_completed": 0,
+  "last_stop_completed": 1,
   "session_task_count": 0,
-  "session_task_count_session": "019ccbd3-157d-79a3-a46d-56e56d44e96d",
+  "session_task_count_session": "019ccb6c-0f15-75d2-bf30-25cdf48c15b3",
   "reflect_iteration": 0,
-  "review_pending": false,
+  "review_pending": true,
   "external_validation_required": false,
   "run_outcome": "blocked",
   "run_outcome_reason": "no eligible task; inspect dependencies, failures, or active work",
-  "last_reconcile_at": "2026-03-08T05:02:14Z",
-  "last_checkpoint_at": null
+  "last_reconcile_at": "2026-03-08T07:49:45Z",
+  "last_checkpoint_at": "2026-03-08T07:49:45Z"
 }

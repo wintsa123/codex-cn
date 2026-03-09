@@ -6340,6 +6340,9 @@ perform_manager_install() {
     "$install_time"
 
   log_step "hodexctl 已安装: $COMMAND_DIR/hodexctl"
+  log_info "状态目录: $STATE_DIR"
+  log_info "命令目录: $COMMAND_DIR"
+  log_info "当前仅安装管理器；如需正式版，请执行: hodexctl install"
 
   case "$PATH_UPDATE_MODE" in
     added)
@@ -6440,6 +6443,10 @@ perform_status() {
       printf '二进制: %s\n' "$STATE_BINARY_PATH"
     else
       printf '正式版安装状态: 未安装\n'
+      if [[ -n "$STATE_CONTROLLER_PATH" && -f "$STATE_CONTROLLER_PATH" ]]; then
+        printf '管理器状态: 已安装\n'
+        printf '提示: 运行 hodexctl install 开始安装正式版\n'
+      fi
     fi
     printf '命令目录: %s\n' "$STATE_COMMAND_DIR"
     printf '管理脚本副本: %s\n' "$STATE_CONTROLLER_PATH"

@@ -4173,6 +4173,9 @@ function Invoke-ManagerInstall {
     Persist-StateRuntimeMetadata
 
     Write-Step "hodexctl 已安装: $(Join-Path $script:CurrentCommandDir 'hodexctl.cmd')"
+    Write-Info "状态目录: $script:StateRoot"
+    Write-Info "命令目录: $script:CurrentCommandDir"
+    Write-Info "当前仅安装管理器；如需正式版，请执行: hodexctl install"
     switch ($script:PathUpdateMode) {
         "added" {
             Write-Info "已写入用户 PATH。"
@@ -4290,6 +4293,10 @@ function Invoke-Status {
             }
         } else {
             Write-Host "正式版安装状态: 未安装"
+            if (-not [string]::IsNullOrWhiteSpace([string]$script:State.controller_path) -and (Test-Path -LiteralPath ([string]$script:State.controller_path))) {
+                Write-Host "管理器状态: 已安装"
+                Write-Host "提示: 运行 hodexctl install 开始安装正式版"
+            }
         }
         Write-Host "命令目录: $([string]$script:State.command_dir)"
         Write-Host "管理脚本副本: $([string]$script:State.controller_path)"

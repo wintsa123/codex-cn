@@ -231,6 +231,8 @@ try {
     if (!(Test-Path $wrapperPath)) { throw 'manager-install wrapper missing' }
     $wrapperContent = Get-Content -LiteralPath $wrapperPath -Raw
     Assert-Contains -Text $wrapperContent -Expected ('$env:HODEX_STATE_DIR = "' + $customStateDir + '"')
+    Assert-Contains -Text $wrapperContent -Expected ('$forwardedArgs = @($args)')
+    Assert-Contains -Text $wrapperContent -Expected ('@("-StateDir", "' + $customStateDir + '") + $forwardedArgs')
 
     if ($env:OS -eq "Windows_NT") {
         $statusViaWrapper = (& $runner -NoProfile -File $wrapperPath status 2>&1 | Out-String)

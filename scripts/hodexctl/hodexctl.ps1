@@ -1996,11 +1996,25 @@ if (-not (Test-Path -LiteralPath "$ControllerPath")) {
     Write-Error "hodexctl controller is missing; reinstall hodexctl."
     exit 1
 }
-if (`$args.Count -eq 0) {
+`$forwardedArgs = @(`$args)
+`$hasStateDirOverride = `$false
+foreach (`$arg in `$forwardedArgs) {
+    if (`$arg -is [string]) {
+        `$normalizedArg = ([string]`$arg).Trim()
+        if (`$normalizedArg -ieq "-StateDir" -or `$normalizedArg -ieq "--state-dir" -or `$normalizedArg -like "--state-dir=*") {
+            `$hasStateDirOverride = `$true
+            break
+        }
+    }
+}
+if (`$forwardedArgs.Count -eq 0) {
     & "$runner" -NoProfile -ExecutionPolicy Bypass -File "$ControllerPath" help
     exit `$LASTEXITCODE
 }
-& "$runner" -NoProfile -ExecutionPolicy Bypass -File "$ControllerPath" @args
+if (-not `$hasStateDirOverride) {
+    `$forwardedArgs = @("-StateDir", "$StateDir") + `$forwardedArgs
+}
+& "$runner" -NoProfile -ExecutionPolicy Bypass -File "$ControllerPath" @forwardedArgs
 "@
 
     Set-Content -LiteralPath $WrapperPath -Value $content -Encoding UTF8

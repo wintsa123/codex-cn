@@ -1889,7 +1889,7 @@ function Generate-HodexCmdWrapper {
     $content = @"
 @echo off
 if not exist "$BinaryPath" (
-  echo hodex 二进制不存在，请先运行 hodexctl install。 1>&2
+  echo hodex binary is missing; run hodexctl install first. 1>&2
   exit /b 1
 )
 "$BinaryPath" %*
@@ -1907,7 +1907,7 @@ function Generate-HodexPs1Wrapper {
     $content = @"
 `$ErrorActionPreference = "Stop"
 if (-not (Test-Path -LiteralPath "$BinaryPath")) {
-    Write-Error "hodex 二进制不存在，请先运行 hodexctl install。"
+    Write-Error "hodex binary is missing; run hodexctl install first."
     exit 1
 }
 & "$BinaryPath" @args
@@ -1926,7 +1926,7 @@ function Generate-RuntimeCmdWrapper {
     $content = @"
 @echo off
 if not exist "$BinaryPath" (
-  echo $CommandName 对应的二进制不存在，请重新运行 hodexctl 安装或重编译。 1>&2
+  echo $CommandName binary is missing; rerun hodexctl install or rebuild. 1>&2
   exit /b 1
 )
 "$BinaryPath" %*
@@ -1945,7 +1945,7 @@ function Generate-RuntimePs1Wrapper {
     $content = @"
 `$ErrorActionPreference = "Stop"
 if (-not (Test-Path -LiteralPath "$BinaryPath")) {
-    Write-Error "$CommandName 对应的二进制不存在，请重新运行 hodexctl 安装或重编译。"
+    Write-Error "$CommandName binary is missing; rerun hodexctl install or rebuild."
     exit 1
 }
 & "$BinaryPath" @args
@@ -1967,7 +1967,7 @@ function Generate-HodexctlCmdWrapper {
 set "HODEX_DISPLAY_NAME=hodexctl"
 set "HODEX_STATE_DIR=$StateDir"
 if not exist "$ControllerPath" (
-  echo hodexctl 管理脚本不存在，请重新安装。 1>&2
+  echo hodexctl controller is missing; reinstall hodexctl. 1>&2
   exit /b 1
 )
 if "%~1"=="" (
@@ -1993,7 +1993,7 @@ function Generate-HodexctlPs1Wrapper {
 `$env:HODEX_DISPLAY_NAME = "hodexctl"
 `$env:HODEX_STATE_DIR = "$StateDir"
 if (-not (Test-Path -LiteralPath "$ControllerPath")) {
-    Write-Error "hodexctl 管理脚本不存在，请重新安装。"
+    Write-Error "hodexctl controller is missing; reinstall hodexctl."
     exit 1
 }
 if (`$args.Count -eq 0) {

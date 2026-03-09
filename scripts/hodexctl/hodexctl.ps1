@@ -1356,7 +1356,7 @@ function Resolve-ReleaseDirect {
         foreach ($candidate in $script:AssetCandidates) {
             $assetUrl = "$root/latest/download/$candidate"
             try {
-                Invoke-HeadRequestWithRetry -Label "release-download" -Uri $assetUrl
+                [void](Invoke-HeadRequestWithRetry -Label "release-download" -Uri $assetUrl)
                 return New-DirectReleaseDescriptor -ReleaseTag "latest" -ReleaseName "latest" -HtmlUrl "$root/latest" -AssetName $candidate -AssetUrl $assetUrl
             } catch {
             }
@@ -1370,7 +1370,7 @@ function Resolve-ReleaseDirect {
             foreach ($candidate in $script:AssetCandidates) {
                 $assetUrl = "$root/download/$tag/$candidate"
                 try {
-                    Invoke-HeadRequestWithRetry -Label "release-download" -Uri $assetUrl
+                    [void](Invoke-HeadRequestWithRetry -Label "release-download" -Uri $assetUrl)
                     $htmlUrl = if ([string]::IsNullOrWhiteSpace($script:ReleaseBaseUrl)) {
                         "https://github.com/$script:RepoName/releases/tag/$tag"
                     } else {

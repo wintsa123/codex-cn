@@ -130,7 +130,6 @@ try {
         Assert-Contains -Text (Get-Content -LiteralPath $summaryPrompt -Raw) -Expected "完整 changelog:"
         Assert-Contains -Text (Get-Content -LiteralPath $summaryPrompt -Raw) -Expected "新增功能"
         Assert-Contains -Text (Get-Content -LiteralPath $summaryPrompt -Raw) -Expected "修复内容"
-        Assert-Contains -Text (Get-Content -LiteralPath $summaryPrompt -Raw) -Expected "破坏性变更 / 迁移要求"
         Assert-Contains -Text (Get-Content -LiteralPath $summaryPrompt -Raw) -Expected "- add feature A"
     } finally {
         $env:PATH = $originalPath

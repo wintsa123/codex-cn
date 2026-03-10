@@ -1099,10 +1099,18 @@ function Write-State {
         $payload.source_profiles = $state.source_profiles
     }
     if ($state.active_runtime_aliases) {
-        $payload.active_runtime_aliases = $state.active_runtime_aliases
+        if ($state.active_runtime_aliases -is [System.Collections.IDictionary]) {
+            $payload.active_runtime_aliases = $state.active_runtime_aliases
+        } else {
+            $aliases = [ordered]@{}
+            foreach ($property in $state.active_runtime_aliases.PSObject.Properties) {
+                $aliases[$property.Name] = $property.Value
+            }
+            $payload.active_runtime_aliases = $aliases
+        }
     }
     if (-not [string]::IsNullOrWhiteSpace($BinaryPath)) {
-        $payload.active_runtime_aliases.hodex = "release"
+        $payload.active_runtime_aliases["hodex"] = "release"
     } elseif ($payload.active_runtime_aliases.Contains("hodex")) {
         $payload.active_runtime_aliases.Remove("hodex")
     }

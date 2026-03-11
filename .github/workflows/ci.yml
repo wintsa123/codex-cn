@@ -135,8 +135,16 @@ jobs:
           mkdir -p "$server_root"
           cp scripts/install.sh "${server_root}/install.sh"
 
-          printf '#!/usr/bin/env bash\necho dummy\n' > "${server_root}/codex-x86_64-unknown-linux-gnu"
+          cat > "${server_root}/codex-x86_64-unknown-linux-gnu" <<'EOF'
+          #!/usr/bin/env bash
+          echo gnu
+          EOF
           chmod +x "${server_root}/codex-x86_64-unknown-linux-gnu"
+          cat > "${server_root}/codex-x86_64-unknown-linux-musl" <<'EOF'
+          #!/usr/bin/env bash
+          echo musl
+          EOF
+          chmod +x "${server_root}/codex-x86_64-unknown-linux-musl"
 
           port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
           python3 -m http.server "$port" --bind 127.0.0.1 --directory "$server_root" >/dev/null 2>&1 &
@@ -152,6 +160,7 @@ jobs:
 
           CODEX_BASE_URL="http://127.0.0.1:$port" INSTALL_DIR="$install_dir" bash -c "curl -fsSL http://127.0.0.1:$port/install.sh | bash"
           test -x "${install_dir}/codex"
+          [[ "$("${install_dir}/codex")" == "gnu" ]]
 
       - name: Smoke test install.ps1 (local server)
         if: runner.os == 'Windows'
@@ -238,10 +247,12 @@ jobs:
               asset_name="codex-x86_64-apple-darwin"
               ;;
             Linux:aarch64|Linux:arm64)
-              asset_name="codex-aarch64-unknown-linux-musl"
+              gnu_asset_name="codex-aarch64-unknown-linux-gnu"
+              musl_asset_name="codex-aarch64-unknown-linux-musl"
               ;;
             Linux:x86_64|Linux:amd64)
-              asset_name="codex-x86_64-unknown-linux-musl"
+              gnu_asset_name="codex-x86_64-unknown-linux-gnu"
+              musl_asset_name="codex-x86_64-unknown-linux-musl"
               ;;
             *)
               echo "Unsupported runner platform: $(uname -s) $(uname -m)" >&2
@@ -249,15 +260,37 @@ jobs:
               ;;
           esac
 
-          cat > "${server_root}/latest/download/${asset_name}" <<'EOF'
-          #!/usr/bin/env bash
-          if [[ "${1:-}" == "--version" ]]; then
-            echo "codex-cli 9.9.9"
-            exit 0
+          if [[ -n "${gnu_asset_name:-}" ]]; then
+            cat > "${server_root}/latest/download/${gnu_asset_name}" <<'EOF'
+            #!/usr/bin/env bash
+            if [[ "${1:-}" == "--version" ]]; then
+              echo "codex-cli 9.9.9-gnu"
+              exit 0
+            fi
+            echo "gnu"
+            EOF
+            chmod +x "${server_root}/latest/download/${gnu_asset_name}"
+
+            cat > "${server_root}/latest/download/${musl_asset_name}" <<'EOF'
+            #!/usr/bin/env bash
+            if [[ "${1:-}" == "--version" ]]; then
+              echo "codex-cli 9.9.9-musl"
+              exit 0
+            fi
+            echo "musl"
+            EOF
+            chmod +x "${server_root}/latest/download/${musl_asset_name}"
+          else
+            cat > "${server_root}/latest/download/${asset_name}" <<'EOF'
+            #!/usr/bin/env bash
+            if [[ "${1:-}" == "--version" ]]; then
+              echo "codex-cli 9.9.9"
+              exit 0
+            fi
+            echo "dummy"
+            EOF
+            chmod +x "${server_root}/latest/download/${asset_name}"
           fi
-          echo "dummy"
-          EOF
-          chmod +x "${server_root}/latest/download/${asset_name}"
 
           port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
           python3 -m http.server "$port" --bind 127.0.0.1 --directory "$server_root" >/dev/null 2>&1 &
@@ -282,6 +315,9 @@ jobs:
           test -x "${state_dir}/libexec/hodexctl.sh"
           test -x "${command_dir}/hodex"
           test -x "${command_dir}/hodexctl"
+          if [[ "${RUNNER_OS}" == "Linux" ]]; then
+            [[ "$("${state_dir}/bin/codex" --version)" == "codex-cli 9.9.9-gnu" ]]
+          fi
 
           HODEX_RELEASE_BASE_URL="http://127.0.0.1:$port" \
             bash scripts/hodexctl/hodexctl.sh uninstall \

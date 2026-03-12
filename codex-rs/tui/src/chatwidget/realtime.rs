@@ -182,7 +182,7 @@ impl ChatWidget {
         if !self.realtime_conversation.warned_audio_only_submission {
             self.realtime_conversation.warned_audio_only_submission = true;
             self.add_info_message(
-                "Realtime voice mode is audio-only. Use /realtime to stop.".to_string(),
+                "实时语音模式仅支持音频。使用 /realtime 可停止。".to_string(),
                 None,
             );
         } else {
@@ -193,7 +193,7 @@ impl ChatWidget {
     }
 
     fn realtime_footer_hint_items() -> Vec<(String, String)> {
-        vec![("/realtime".to_string(), "stop live voice".to_string())]
+        vec![("/realtime".to_string(), "停止实时语音".to_string())]
     }
 
     pub(super) fn start_realtime_conversation(&mut self) {
@@ -269,7 +269,7 @@ impl ChatWidget {
             RealtimeEvent::ConversationItemDone { .. } => {}
             RealtimeEvent::HandoffRequested(_) => {}
             RealtimeEvent::Error(message) => {
-                self.add_error_message(format!("Realtime voice error: {message}"));
+                self.add_error_message(format!("实时语音错误：{message}"));
                 self.reset_realtime_conversation_state();
             }
         }
@@ -280,7 +280,7 @@ impl ChatWidget {
         let reason = ev.reason;
         self.reset_realtime_conversation_state();
         if !requested && let Some(reason) = reason {
-            self.add_info_message(format!("Realtime voice mode closed: {reason}"), None);
+            self.add_info_message(format!("实时语音模式已关闭：{reason}"), None);
         }
         self.request_redraw();
     }
@@ -322,7 +322,7 @@ impl ChatWidget {
             Err(err) => {
                 self.remove_transcription_placeholder(&placeholder_id);
                 self.realtime_conversation.meter_placeholder_id = None;
-                self.add_error_message(format!("Failed to start microphone capture: {err}"));
+                self.add_error_message(format!("启动麦克风采集失败：{err}"));
                 return;
             }
         };
@@ -379,7 +379,7 @@ impl ChatWidget {
                         self.realtime_conversation.audio_player = Some(player);
                     }
                     Err(err) => {
-                        self.add_error_message(format!("Failed to start speaker output: {err}"));
+                        self.add_error_message(format!("启动扬声器输出失败：{err}"));
                     }
                 }
             }

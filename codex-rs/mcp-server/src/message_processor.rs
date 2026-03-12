@@ -363,7 +363,7 @@ impl MessageProcessor {
                     Err(e) => {
                         let result = CallToolResult {
                             content: vec![rmcp::model::Content::text(format!(
-                                "Failed to load Codex configuration from overrides: {e}"
+                                "从覆盖配置加载 Codex 配置失败：{e}"
                             ))],
                             structured_content: None,
                             is_error: Some(true),
@@ -376,7 +376,7 @@ impl MessageProcessor {
                 Err(e) => {
                     let result = CallToolResult {
                         content: vec![rmcp::model::Content::text(format!(
-                            "Failed to parse configuration for Codex tool: {e}"
+                            "解析 Codex 工具配置失败：{e}"
                         ))],
                         structured_content: None,
                         is_error: Some(true),
@@ -389,7 +389,7 @@ impl MessageProcessor {
             None => {
                 let result = CallToolResult {
                     content: vec![rmcp::model::Content::text(
-                        "Missing arguments for codex tool-call; the `prompt` field is required.",
+                        "codex 工具调用缺少参数；必须提供 `prompt` 字段。",
                     )],
                     structured_content: None,
                     is_error: Some(true),
@@ -437,7 +437,7 @@ impl MessageProcessor {
                     tracing::error!("Failed to parse Codex tool call reply parameters: {e}");
                     let result = CallToolResult {
                         content: vec![rmcp::model::Content::text(format!(
-                            "Failed to parse configuration for Codex tool: {e}"
+                            "解析 Codex 工具配置失败：{e}"
                         ))],
                         structured_content: None,
                         is_error: Some(true),
@@ -449,11 +449,11 @@ impl MessageProcessor {
             },
             None => {
                 tracing::error!(
-                    "Missing arguments for codex-reply tool-call; the `thread_id` and `prompt` fields are required."
+                    "codex-reply 工具调用缺少参数；必须提供 `thread_id` 与 `prompt` 字段。"
                 );
                 let result = CallToolResult {
                     content: vec![rmcp::model::Content::text(
-                        "Missing arguments for codex-reply tool-call; the `thread_id` and `prompt` fields are required.",
+                        "codex-reply 工具调用缺少参数；必须提供 `thread_id` 与 `prompt` 字段。",
                     )],
                     structured_content: None,
                     is_error: Some(true),
@@ -470,7 +470,7 @@ impl MessageProcessor {
                 tracing::error!("Failed to parse thread_id: {e}");
                 let result = CallToolResult {
                     content: vec![rmcp::model::Content::text(format!(
-                        "Failed to parse thread_id: {e}"
+                        "解析 thread_id 失败：{e}"
                     ))],
                     structured_content: None,
                     is_error: Some(true),

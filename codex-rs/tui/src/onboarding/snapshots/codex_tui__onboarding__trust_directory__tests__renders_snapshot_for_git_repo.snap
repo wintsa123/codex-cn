@@ -1,14 +1,12 @@
 ---
 source: tui/src/onboarding/trust_directory.rs
-assertion_line: 218
 expression: terminal.backend()
 ---
-> You are in /workspace/project
+> 你当前位于 /workspace/project
 
-  Do you trust the contents of this directory? Working with untrusted
-  contents comes with higher risk of prompt injection.
+  你是否信任该目录中的内容？处理不受信任内容会带来更高的提示注入风险。
 
-› 1. Yes, continue                                                    
-  2. No, quit
+› 1. 是，继续                                                         
+  2. 否，退出
 
-  Press enter to continue
+  按 enter 继续

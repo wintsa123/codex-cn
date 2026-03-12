@@ -72,7 +72,7 @@ pub async fn run_codex_tool_session(
         Ok(res) => res,
         Err(e) => {
             let result = CallToolResult {
-                content: vec![Content::text(format!("Failed to start Codex session: {e}"))],
+                content: vec![Content::text(format!("启动 Codex 会话失败：{e}"))],
                 is_error: Some(true),
                 structured_content: None,
                 meta: None,
@@ -122,7 +122,7 @@ pub async fn run_codex_tool_session(
         tracing::error!("Failed to submit initial prompt: {e}");
         let result = create_call_tool_result_with_thread_id(
             thread_id,
-            format!("Failed to submit initial prompt: {e}"),
+            format!("提交初始提示失败：{e}"),
             Some(true),
         );
         outgoing.send_response(id.clone(), result).await;
@@ -167,7 +167,7 @@ pub async fn run_codex_tool_session_reply(
         tracing::error!("Failed to submit user input: {e}");
         let result = create_call_tool_result_with_thread_id(
             thread_id,
-            format!("Failed to submit user input: {e}"),
+            format!("提交用户输入失败：{e}"),
             Some(true),
         );
         outgoing.send_response(request_id.clone(), result).await;

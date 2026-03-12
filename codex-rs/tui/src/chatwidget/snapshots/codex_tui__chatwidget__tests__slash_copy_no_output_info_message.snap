@@ -1,6 +1,5 @@
 ---
 source: tui/src/chatwidget/tests.rs
-assertion_line: 4430
-expression: rendered.clone()
+expression: rendered
 ---
-• `/copy` is unavailable before the first Codex output or right after a rollback.
+• 首次收到 Codex 输出前或刚回滚后，`/copy` 不可用。

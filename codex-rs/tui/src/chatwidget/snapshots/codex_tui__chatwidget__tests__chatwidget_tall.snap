@@ -3,7 +3,7 @@ source: tui/src/chatwidget/tests.rs
 expression: term.backend().vt100().screen().contents()
 ---
 
-• Working (0s • esc to interrupt)
+• 处理中 (0s • esc to interrupt)
 
 • Queued follow-up messages
   ↳ Hello, world! 0

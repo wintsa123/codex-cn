@@ -2,6 +2,6 @@
 source: tui/src/status_indicator_widget.rs
 expression: terminal.backend()
 ---
-"• Working (0s)                "
+"• 处理中 (0s)                 " Hidden by multi-width symbols: [(3, " "), (5, " "), (7, " ")]
 "  └ A man a plan a canal      "
 "    panama                    "

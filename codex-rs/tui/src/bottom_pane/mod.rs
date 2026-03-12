@@ -633,7 +633,7 @@ impl BottomPane {
         self.request_redraw();
     }
 
-    /// Update the status indicator header (defaults to "Working") and details below it.
+    /// 更新状态指示器标题（默认“处理中”）及其下方详情。
     ///
     /// Passing `None` clears any existing details. No-ops if the status indicator is not active.
     pub(crate) fn update_status(
@@ -1272,7 +1272,7 @@ mod tests {
             r0.push(buf[(x, 0)].symbol().chars().next().unwrap_or(' '));
         }
         assert!(
-            !r0.contains("Working"),
+            !r0.contains("处理中"),
             "overlay should not render above modal"
         );
     }
@@ -1323,8 +1323,8 @@ mod tests {
             row0.push(buf[(x, 0)].symbol().chars().next().unwrap_or(' '));
         }
         assert!(
-            row0.contains("Working"),
-            "expected Working header after denial on row 0: {row0:?}"
+            row0.contains("处理中"),
+            "expected 处理中 header after denial on row 0: {row0:?}"
         );
 
         // Composer placeholder should be visible somewhere below.
@@ -1369,7 +1369,7 @@ mod tests {
         pane.render(area, &mut buf);
 
         let bufs = snapshot_buffer(&buf);
-        assert!(bufs.contains("• Working"), "expected Working header");
+        assert!(bufs.contains("• 处理中"), "expected 处理中 header");
     }
 
     #[test]
@@ -1472,7 +1472,7 @@ mod tests {
 
         pane.set_task_running(true);
         pane.update_status(
-            "Working".to_string(),
+            "处理中".to_string(),
             Some("First detail line\nSecond detail line".to_string()),
             StatusDetailsCapitalization::CapitalizeFirst,
             STATUS_DETAILS_DEFAULT_MAX_LINES,

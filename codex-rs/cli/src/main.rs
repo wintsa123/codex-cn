@@ -55,9 +55,9 @@ use codex_core::features::Stage;
 use codex_core::features::is_known_feature_key;
 use codex_core::terminal::TerminalName;
 
-/// Codex CLI
+/// Codex 命令行工具
 ///
-/// If no subcommand is specified, options will be forwarded to the interactive CLI.
+/// 未指定子命令时，参数会转发给交互式 CLI。
 #[derive(Debug, Parser)]
 #[clap(
     author,
@@ -86,80 +86,80 @@ struct MultitoolCli {
 
 #[derive(Debug, clap::Subcommand)]
 enum Subcommand {
-    /// Run Codex non-interactively.
+    /// 以非交互模式运行 Codex。
     #[clap(visible_alias = "e")]
     Exec(ExecCli),
 
-    /// Run a local GitHub webhook listener that delegates work to Codex.
+    /// 启动本地 GitHub webhook 监听器，并将任务委托给 Codex。
     Github(GithubCommand),
 
-    /// Start Codex as a Web UI server (HTTP+SSE).
+    /// 以 Web UI 服务器模式启动 Codex（HTTP+SSE）。
     Serve(ServeCli),
 
-    /// Run a code review non-interactively.
+    /// 以非交互模式执行代码审查。
     Review(ReviewArgs),
 
-    /// Manage login.
+    /// 管理登录。
     Login(LoginCommand),
 
-    /// Remove stored authentication credentials.
+    /// 删除已保存的认证凭据。
     Logout(LogoutCommand),
 
-    /// Manage external MCP servers for Codex.
+    /// 管理 Codex 的外部 MCP 服务器。
     Mcp(McpCli),
 
-    /// Start Codex as an MCP server (stdio).
+    /// 以 MCP 服务器模式启动 Codex（stdio）。
     McpServer,
 
-    /// [experimental] Run the app server or related tooling.
+    /// [实验性] 运行 app server 或相关工具。
     AppServer(AppServerCommand),
 
-    /// Launch the Codex desktop app (downloads the macOS installer if missing).
+    /// 启动 Codex 桌面应用（若缺失会下载 macOS 安装包）。
     #[cfg(target_os = "macos")]
     App(app_cmd::AppCommand),
 
-    /// Generate shell completion scripts.
+    /// 生成 shell 自动补全脚本。
     Completion(CompletionCommand),
 
-    /// Run commands within a Codex-provided sandbox.
+    /// 在 Codex 提供的沙箱内运行命令。
     Sandbox(SandboxArgs),
 
-    /// Debugging tools.
+    /// 调试工具。
     Debug(DebugCommand),
 
-    /// Execpolicy tooling.
+    /// Execpolicy 工具集。
     #[clap(hide = true)]
     Execpolicy(ExecpolicyCommand),
 
-    /// Apply the latest diff produced by Codex agent as a `git apply` to your local working tree.
+    /// 将 Codex 代理最新产出的 diff 通过 `git apply` 应用到本地工作区。
     #[clap(visible_alias = "a")]
     Apply(ApplyCommand),
 
-    /// Resume a previous interactive session (picker by default; use --last to continue the most recent).
+    /// 恢复先前的交互式会话（默认打开选择器；使用 --last 继续最近一次）。
     Resume(ResumeCommand),
 
-    /// Fork a previous interactive session (picker by default; use --last to fork the most recent).
+    /// 分叉先前的交互式会话（默认打开选择器；使用 --last 分叉最近一次）。
     Fork(ForkCommand),
 
-    /// [EXPERIMENTAL] Browse tasks from Codex Cloud and apply changes locally.
+    /// [实验性] 浏览 Codex Cloud 任务并将变更应用到本地。
     #[clap(name = "cloud", alias = "cloud-tasks")]
     Cloud(CloudTasksCli),
 
-    /// Internal: run the responses API proxy.
+    /// 内部命令：运行 responses API 代理。
     #[clap(hide = true)]
     ResponsesApiProxy(ResponsesApiProxyArgs),
 
-    /// Internal: relay stdio to a Unix domain socket.
+    /// 内部命令：将 stdio 转发到 Unix domain socket。
     #[clap(hide = true, name = "stdio-to-uds")]
     StdioToUds(StdioToUdsCommand),
 
-    /// Inspect feature flags.
+    /// 查看功能开关。
     Features(FeaturesCli),
 }
 
 #[derive(Debug, Parser)]
 struct CompletionCommand {
-    /// Shell to generate completions for
+    /// 要生成自动补全的 shell
     #[clap(value_enum, default_value_t = Shell::Bash)]
     shell: Shell,
 }
@@ -172,10 +172,10 @@ struct DebugCommand {
 
 #[derive(Debug, clap::Subcommand)]
 enum DebugSubcommand {
-    /// Tooling: helps debug the app server.
+    /// 工具：帮助调试 app server。
     AppServer(DebugAppServerCommand),
 
-    /// Internal: reset local memory state for a fresh start.
+    /// 内部命令：重置本地记忆状态以便全新启动。
     #[clap(hide = true)]
     ClearMemories,
 }
@@ -200,16 +200,16 @@ struct DebugAppServerSendMessageV2Command {
 
 #[derive(Debug, Parser)]
 struct ResumeCommand {
-    /// Conversation/session id (UUID) or thread name. UUIDs take precedence if it parses.
-    /// If omitted, use --last to pick the most recent recorded session.
+    /// 会话 ID（UUID）或线程名。若可解析为 UUID，则优先按 UUID 处理。
+    /// 省略时可用 --last 选择最近记录的会话。
     #[arg(value_name = "SESSION_ID")]
     session_id: Option<String>,
 
-    /// Continue the most recent session without showing the picker.
+    /// 不显示选择器，直接继续最近一次会话。
     #[arg(long = "last", default_value_t = false)]
     last: bool,
 
-    /// Show all sessions (disables cwd filtering and shows CWD column).
+    /// 显示所有会话（禁用 cwd 过滤并显示 CWD 列）。
     #[arg(long = "all", default_value_t = false)]
     all: bool,
 
@@ -219,16 +219,16 @@ struct ResumeCommand {
 
 #[derive(Debug, Parser)]
 struct ForkCommand {
-    /// Conversation/session id (UUID). When provided, forks this session.
-    /// If omitted, use --last to pick the most recent recorded session.
+    /// 会话 ID（UUID）。提供后将分叉该会话。
+    /// 省略时可用 --last 选择最近记录的会话。
     #[arg(value_name = "SESSION_ID")]
     session_id: Option<String>,
 
-    /// Fork the most recent session without showing the picker.
+    /// 不显示选择器，直接分叉最近一次会话。
     #[arg(long = "last", default_value_t = false, conflicts_with = "session_id")]
     last: bool,
 
-    /// Show all sessions (disables cwd filtering and shows CWD column).
+    /// 显示所有会话（禁用 cwd 过滤并显示 CWD 列）。
     #[arg(long = "all", default_value_t = false)]
     all: bool,
 
@@ -244,15 +244,15 @@ struct SandboxArgs {
 
 #[derive(Debug, clap::Subcommand)]
 enum SandboxCommand {
-    /// Run a command under Seatbelt (macOS only).
+    /// 在 Seatbelt 下运行命令（仅 macOS）。
     #[clap(visible_alias = "seatbelt")]
     Macos(SeatbeltCommand),
 
-    /// Run a command under Landlock+seccomp (Linux only).
+    /// 在 Landlock+seccomp 下运行命令（仅 Linux）。
     #[clap(visible_alias = "landlock")]
     Linux(LandlockCommand),
 
-    /// Run a command under Windows restricted token (Windows only).
+    /// 在 Windows 受限令牌下运行命令（仅 Windows）。
     Windows(WindowsCommand),
 }
 
@@ -264,7 +264,7 @@ struct ExecpolicyCommand {
 
 #[derive(Debug, clap::Subcommand)]
 enum ExecpolicySubcommand {
-    /// Check execpolicy files against a command.
+    /// 用指定命令检查 execpolicy 文件。
     #[clap(name = "check")]
     Check(ExecPolicyCheckCommand),
 }
@@ -276,14 +276,14 @@ struct LoginCommand {
 
     #[arg(
         long = "with-api-key",
-        help = "Read the API key from stdin (e.g. `printenv OPENAI_API_KEY | codex login --with-api-key`)"
+        help = "从 stdin 读取 API Key（例如：`printenv OPENAI_API_KEY | codex login --with-api-key`）"
     )]
     with_api_key: bool,
 
     #[arg(
         long = "api-key",
         value_name = "API_KEY",
-        help = "(deprecated) Previously accepted the API key directly; now exits with guidance to use --with-api-key",
+        help = "（已弃用）此前可直接传入 API Key；现在会退出并提示使用 --with-api-key",
         hide = true
     )]
     api_key: Option<String>,
@@ -291,12 +291,12 @@ struct LoginCommand {
     #[arg(long = "device-auth")]
     use_device_code: bool,
 
-    /// EXPERIMENTAL: Use custom OAuth issuer base URL (advanced)
-    /// Override the OAuth issuer base URL (advanced)
+    /// 实验性：使用自定义 OAuth issuer 基础 URL（高级）
+    /// 覆盖 OAuth issuer 基础 URL（高级）
     #[arg(long = "experimental_issuer", value_name = "URL", hide = true)]
     issuer_base_url: Option<String>,
 
-    /// EXPERIMENTAL: Use custom OAuth client ID (advanced)
+    /// 实验性：使用自定义 OAuth client ID（高级）
     #[arg(long = "experimental_client-id", value_name = "CLIENT_ID", hide = true)]
     client_id: Option<String>,
 
@@ -306,7 +306,7 @@ struct LoginCommand {
 
 #[derive(Debug, clap::Subcommand)]
 enum LoginSubcommand {
-    /// Show login status.
+    /// 显示登录状态。
     Status,
 }
 
@@ -318,12 +318,12 @@ struct LogoutCommand {
 
 #[derive(Debug, Parser)]
 struct AppServerCommand {
-    /// Omit to run the app server; specify a subcommand for tooling.
+    /// 省略则直接运行 app server；也可指定子命令执行工具操作。
     #[command(subcommand)]
     subcommand: Option<AppServerSubcommand>,
 
-    /// Transport endpoint URL. Supported values: `stdio://` (default),
-    /// `ws://IP:PORT`.
+    /// 传输端点 URL。支持：`stdio://`（默认）、
+    /// `ws://IP:PORT`。
     #[arg(
         long = "listen",
         value_name = "URL",
@@ -331,63 +331,62 @@ struct AppServerCommand {
     )]
     listen: codex_app_server::AppServerTransport,
 
-    /// Controls whether analytics are enabled by default.
+    /// 控制是否默认启用分析（analytics）。
     ///
-    /// Analytics are disabled by default for app-server. Users have to explicitly opt in
-    /// via the `analytics` section in the config.toml file.
+    /// app-server 默认禁用分析。用户需要在 config.toml 的
+    /// `analytics` 配置段中显式选择启用。
     ///
-    /// However, for first-party use cases like the VSCode IDE extension, we default analytics
-    /// to be enabled by default by setting this flag. Users can still opt out by setting this
-    /// in their config.toml:
+    /// 但在 VSCode IDE 扩展等第一方场景中，可通过该标志将分析默认设为启用。
+    /// 用户仍可在 config.toml 中配置以下内容以关闭：
     ///
     /// ```toml
     /// [analytics]
     /// enabled = false
     /// ```
     ///
-    /// See https://developers.openai.com/codex/config-advanced/#metrics for more details.
+    /// 更多说明见：https://developers.openai.com/codex/config-advanced/#metrics
     #[arg(long = "analytics-default-enabled")]
     analytics_default_enabled: bool,
 }
 
 #[derive(Debug, clap::Subcommand)]
 enum AppServerSubcommand {
-    /// [experimental] Generate TypeScript bindings for the app server protocol.
+    /// [实验性] 为 app server 协议生成 TypeScript 绑定。
     GenerateTs(GenerateTsCommand),
 
-    /// [experimental] Generate JSON Schema for the app server protocol.
+    /// [实验性] 为 app server 协议生成 JSON Schema。
     GenerateJsonSchema(GenerateJsonSchemaCommand),
 }
 
 #[derive(Debug, Args)]
 struct GenerateTsCommand {
-    /// Output directory where .ts files will be written
+    /// `.ts` 文件输出目录
     #[arg(short = 'o', long = "out", value_name = "DIR")]
     out_dir: PathBuf,
 
-    /// Optional path to the Prettier executable to format generated files
+    /// 用于格式化生成文件的 Prettier 可执行文件路径（可选）
     #[arg(short = 'p', long = "prettier", value_name = "PRETTIER_BIN")]
     prettier: Option<PathBuf>,
 
-    /// Include experimental methods and fields in the generated output
+    /// 在生成结果中包含实验性方法与字段
     #[arg(long = "experimental", default_value_t = false)]
     experimental: bool,
 }
 
 #[derive(Debug, Args)]
 struct GenerateJsonSchemaCommand {
-    /// Output directory where the schema bundle will be written
+    /// schema 打包文件输出目录
     #[arg(short = 'o', long = "out", value_name = "DIR")]
     out_dir: PathBuf,
 
-    /// Include experimental methods and fields in the generated output
+    /// 在生成结果中包含实验性方法与字段
     #[arg(long = "experimental", default_value_t = false)]
     experimental: bool,
 }
 
 #[derive(Debug, Parser)]
 struct StdioToUdsCommand {
-    /// Path to the Unix domain socket to connect to.
+    /// 要连接的 Unix domain socket 路径。
     #[arg(value_name = "SOCKET_PATH")]
     socket_path: PathBuf,
 }
@@ -417,13 +416,13 @@ fn format_exit_messages(exit_info: AppExitInfo, color_enabled: bool) -> Vec<Stri
         } else {
             resume_cmd
         };
-        lines.push(format!("To continue this session, run {command}"));
+        lines.push(format!("要继续此会话，请运行 {command}"));
     }
 
     lines
 }
 
-/// Handle the app exit and print the results. Optionally run the update action.
+/// 处理应用退出并打印结果。可选执行更新动作。
 fn handle_app_exit(exit_info: AppExitInfo) -> anyhow::Result<()> {
     match exit_info.exit_reason {
         ExitReason::Fatal(message) => {
@@ -444,7 +443,7 @@ fn handle_app_exit(exit_info: AppExitInfo) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Run the update action and print the result.
+/// 执行更新动作并打印结果。
 fn run_update_action(action: UpdateAction) -> anyhow::Result<()> {
     println!();
     let cmd_str = action.command_str();
@@ -494,11 +493,11 @@ async fn run_debug_app_server_command(cmd: DebugAppServerCommand) -> anyhow::Res
 
 #[derive(Debug, Default, Parser, Clone)]
 struct FeatureToggles {
-    /// Enable a feature (repeatable). Equivalent to `-c features.<name>=true`.
+    /// 启用功能开关（可重复）。等价于 `-c features.<name>=true`。
     #[arg(long = "enable", value_name = "FEATURE", action = clap::ArgAction::Append, global = true)]
     enable: Vec<String>,
 
-    /// Disable a feature (repeatable). Equivalent to `-c features.<name>=false`.
+    /// 禁用功能开关（可重复）。等价于 `-c features.<name>=false`。
     #[arg(long = "disable", value_name = "FEATURE", action = clap::ArgAction::Append, global = true)]
     disable: Vec<String>,
 }
@@ -534,17 +533,17 @@ struct FeaturesCli {
 
 #[derive(Debug, Parser)]
 enum FeaturesSubcommand {
-    /// List known features with their stage and effective state.
+    /// 列出已知功能及其阶段与生效状态。
     List,
-    /// Enable a feature in config.toml.
+    /// 在 config.toml 中启用功能。
     Enable(FeatureSetArgs),
-    /// Disable a feature in config.toml.
+    /// 在 config.toml 中禁用功能。
     Disable(FeatureSetArgs),
 }
 
 #[derive(Debug, Parser)]
 struct FeatureSetArgs {
-    /// Feature key to update (for example: unified_exec).
+    /// 要更新的功能键（例如：unified_exec）。
     feature: String,
 }
 
@@ -957,8 +956,8 @@ async fn run_debug_clear_memories_command(
     Ok(())
 }
 
-/// Prepend root-level overrides so they have lower precedence than
-/// CLI-specific ones specified after the subcommand (if any).
+/// 预置根级覆盖项，使其优先级低于
+/// 子命令后指定的 CLI 专属覆盖项（如果有）。
 fn prepend_config_flags(
     subcommand_config_overrides: &mut CliConfigOverrides,
     cli_config_overrides: CliConfigOverrides,
@@ -1007,7 +1006,7 @@ fn confirm(prompt: &str) -> std::io::Result<bool> {
     Ok(answer.eq_ignore_ascii_case("y") || answer.eq_ignore_ascii_case("yes"))
 }
 
-/// Build the final `TuiCli` for a `codex resume` invocation.
+/// 为 `codex resume` 调用构建最终的 `TuiCli`。
 fn finalize_resume_interactive(
     mut interactive: TuiCli,
     root_config_overrides: CliConfigOverrides,
@@ -1033,7 +1032,7 @@ fn finalize_resume_interactive(
     interactive
 }
 
-/// Build the final `TuiCli` for a `codex fork` invocation.
+/// 为 `codex fork` 调用构建最终的 `TuiCli`。
 fn finalize_fork_interactive(
     mut interactive: TuiCli,
     root_config_overrides: CliConfigOverrides,
@@ -1059,9 +1058,9 @@ fn finalize_fork_interactive(
     interactive
 }
 
-/// Merge flags provided to `codex resume`/`codex fork` so they take precedence over any
-/// root-level flags. Only overrides fields explicitly set on the subcommand-scoped
-/// CLI. Also appends `-c key=value` overrides with highest precedence.
+/// 合并 `codex resume`/`codex fork` 提供的标志，使其优先于任何
+/// 根级标志。仅覆盖子命令作用域 CLI 中显式设置的字段。
+/// 另外追加最高优先级的 `-c key=value` 覆盖项。
 fn merge_interactive_cli_flags(interactive: &mut TuiCli, subcommand_cli: TuiCli) {
     if let Some(model) = subcommand_cli.model {
         interactive.model = Some(model);

@@ -1,13 +1,12 @@
 ---
 source: tui/src/bottom_pane/skills_toggle_view.rs
-assertion_line: 439
 expression: "render_lines(&view, 72)"
 ---
                                                                         
-  Enable/Disable Skills                                                 
-  Turn skills on or off. Your changes are saved automatically.          
+  启 用 /禁 用 技 能                                                          
+  开 启 或 关 闭 技 能 。 变 更 会 自 动 保 存 。                                       
                                                                         
-  Type to search skills                                                 
+  输 入 以 搜 索 技 能                                                         
   >                                                                     
 › [x] Repo Scout        Summarize the repo layout                       
   [ ] Changelog Writer  Draft release notes                             

@@ -219,13 +219,12 @@ impl StatusLineSetupView {
 
         Self {
             picker: MultiSelectPicker::builder(
-                "Configure Status Line".to_string(),
-                Some("Select which items to display in the status line.".to_string()),
+                "配置状态栏".to_string(),
+                Some("选择要在状态栏中显示的项目。".to_string()),
                 app_event_tx,
             )
             .instructions(vec![
-                "Use ↑↓ to navigate, ←→ to move, space to select, enter to confirm, esc to cancel."
-                    .into(),
+                "使用 ↑↓ 导航，←→ 调整顺序，空格选择，Enter 确认，Esc 取消。".into(),
             ])
             .items(items)
             .enable_ordering()

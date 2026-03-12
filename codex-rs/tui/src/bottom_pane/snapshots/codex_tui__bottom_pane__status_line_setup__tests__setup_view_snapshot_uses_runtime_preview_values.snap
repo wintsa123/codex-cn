@@ -1,13 +1,12 @@
 ---
 source: tui/src/bottom_pane/status_line_setup.rs
-assertion_line: 365
 expression: "render_lines(&view, 72)"
 ---
                                                                         
-  Configure Status Line                                                 
-  Select which items to display in the status line.                     
+  配 置 状 态 栏                                                             
+  选 择 要 在 状 态 栏 中 显 示 的 项 目 。                                           
                                                                         
-  Type to search                                                        
+  输 入 以 搜 索                                                             
   >                                                                     
 › [x] model-name            Current model name                          
   [x] current-dir           Current working directory                   
@@ -19,4 +18,4 @@ expression: "render_lines(&view, 72)"
   [ ] five-hour-limit       Remaining usage on 5-hour usage limit (om…  
                                                                         
   gpt-5-codex · ~/codex-rs · jif/statusline-preview                     
-  Use ↑↓ to navigate, ←→ to move, space to select, enter to confirm, esc
+  使 用  ↑↓ 导 航 ， ←→ 调 整 顺 序 ， 空 格 选 择 ， Enter 确 认 ， Esc 取 消 。

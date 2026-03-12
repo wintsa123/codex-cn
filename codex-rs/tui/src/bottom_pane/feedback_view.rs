@@ -112,18 +112,18 @@ impl FeedbackNoteView {
         match result {
             Ok(()) => {
                 let prefix = if self.include_logs {
-                    "• Feedback uploaded."
+                    "• 反馈已上传。"
                 } else {
-                    "• Feedback recorded (no logs)."
+                    "• 反馈已记录（不含日志）。"
                 };
                 let issue_url =
                     issue_url_for_category(self.category, &thread_id, self.feedback_audience);
                 let mut lines = vec![Line::from(match issue_url.as_ref() {
                     Some(_) if self.feedback_audience == FeedbackAudience::OpenAiEmployee => {
-                        format!("{prefix} Please report this in #codex-feedback:")
+                        format!("{prefix} 请在 #codex-feedback 中反馈：")
                     }
-                    Some(_) => format!("{prefix} Please open an issue using the following URL:"),
-                    None => format!("{prefix} Thanks for the feedback!"),
+                    Some(_) => format!("{prefix} 请使用以下链接创建 issue："),
+                    None => format!("{prefix} 感谢你的反馈！"),
                 })];
                 match issue_url {
                     Some(url) if self.feedback_audience == FeedbackAudience::OpenAiEmployee => {
@@ -131,7 +131,7 @@ impl FeedbackNoteView {
                             "".into(),
                             Line::from(vec!["  ".into(), url.cyan().underlined()]),
                             "".into(),
-                            Line::from("  Share this and add some info about your problem:"),
+                            Line::from("  请分享下方链接并补充你的问题信息："),
                             Line::from(vec![
                                 "    ".into(),
                                 format!("https://go/codex-feedback/{thread_id}").bold(),
@@ -144,9 +144,9 @@ impl FeedbackNoteView {
                             Line::from(vec!["  ".into(), url.cyan().underlined()]),
                             "".into(),
                             Line::from(vec![
-                                "  Or mention your thread ID ".into(),
+                                "  或在已有 issue 中提及你的线程 ID ".into(),
                                 std::mem::take(&mut thread_id).bold(),
-                                " in an existing issue.".into(),
+                                "。".into(),
                             ]),
                         ]);
                     }
@@ -154,7 +154,7 @@ impl FeedbackNoteView {
                         lines.extend([
                             "".into(),
                             Line::from(vec![
-                                "  Thread ID: ".into(),
+                                "  线程 ID：".into(),
                                 std::mem::take(&mut thread_id).bold(),
                             ]),
                         ]);
@@ -166,7 +166,7 @@ impl FeedbackNoteView {
             }
             Err(e) => {
                 self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
-                    history_cell::new_error_event(format!("Failed to upload feedback: {e}")),
+                    history_cell::new_error_event(format!("上传反馈失败：{e}")),
                 )));
             }
         }
@@ -467,36 +467,36 @@ pub(crate) fn feedback_selection_params(
     app_event_tx: AppEventSender,
 ) -> super::SelectionViewParams {
     super::SelectionViewParams {
-        title: Some("How was this?".to_string()),
+        title: Some("这次结果怎么样？".to_string()),
         items: vec![
             make_feedback_item(
                 app_event_tx.clone(),
-                "bug",
-                "Crash, error message, hang, or broken UI/behavior.",
+                "问题反馈",
+                "崩溃、报错、卡住，或界面/行为异常。",
                 FeedbackCategory::Bug,
             ),
             make_feedback_item(
                 app_event_tx.clone(),
-                "bad result",
-                "Output was off-target, incorrect, incomplete, or unhelpful.",
+                "结果不佳",
+                "输出偏题、不正确、不完整，或没有帮助。",
                 FeedbackCategory::BadResult,
             ),
             make_feedback_item(
                 app_event_tx.clone(),
-                "good result",
-                "Helpful, correct, high‑quality, or delightful result worth celebrating.",
+                "结果很好",
+                "结果有帮助、正确、高质量，或让人满意，值得表扬。",
                 FeedbackCategory::GoodResult,
             ),
             make_feedback_item(
                 app_event_tx.clone(),
-                "safety check",
-                "Benign usage blocked due to safety checks or refusals.",
+                "安全检查",
+                "正常使用场景因安全检查或拒绝策略被拦截。",
                 FeedbackCategory::SafetyCheck,
             ),
             make_feedback_item(
                 app_event_tx,
-                "other",
-                "Slowness, feature suggestion, UX feedback, or anything else.",
+                "其他",
+                "速度慢、功能建议、体验反馈，或其他任何问题。",
                 FeedbackCategory::Other,
             ),
         ],
@@ -507,11 +507,11 @@ pub(crate) fn feedback_selection_params(
 /// Build the selection popup params shown when feedback is disabled.
 pub(crate) fn feedback_disabled_params() -> super::SelectionViewParams {
     super::SelectionViewParams {
-        title: Some("Sending feedback is disabled".to_string()),
-        subtitle: Some("This action is disabled by configuration.".to_string()),
+        title: Some("反馈发送已禁用".to_string()),
+        subtitle: Some("该操作已被配置禁用。".to_string()),
         footer_hint: Some(standard_popup_hint_line()),
         items: vec![super::SelectionItem {
-            name: "Close".to_string(),
+            name: "关闭".to_string(),
             dismiss_on_select: true,
             ..Default::default()
         }],
@@ -569,9 +569,9 @@ pub(crate) fn feedback_upload_consent_params(
 
     // Build header listing files that would be sent if user consents.
     let mut header_lines: Vec<Box<dyn crate::render::renderable::Renderable>> = vec![
-        Line::from("Upload logs?".bold()).into(),
+        Line::from("上传日志？".bold()).into(),
         Line::from("").into(),
-        Line::from("The following files will be sent:".dim()).into(),
+        Line::from("将发送以下文件：".dim()).into(),
         Line::from(vec!["  • ".into(), "codex-logs.log".into()]).into(),
     ];
     if let Some(path) = rollout_path.as_deref()
@@ -593,17 +593,14 @@ pub(crate) fn feedback_upload_consent_params(
         footer_hint: Some(standard_popup_hint_line()),
         items: vec![
             super::SelectionItem {
-                name: "Yes".to_string(),
-                description: Some(
-                    "Share the current Codex session logs with the team for troubleshooting."
-                        .to_string(),
-                ),
+                name: "是".to_string(),
+                description: Some("将当前 Codex 会话日志分享给团队，以便排查问题。".to_string()),
                 actions: vec![yes_action],
                 dismiss_on_select: true,
                 ..Default::default()
             },
             super::SelectionItem {
-                name: "No".to_string(),
+                name: "否".to_string(),
                 actions: vec![no_action],
                 dismiss_on_select: true,
                 ..Default::default()

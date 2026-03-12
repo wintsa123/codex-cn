@@ -220,7 +220,7 @@ impl RequestUserInputOverlay {
             &layout.rows,
             &layout.state,
             layout.rows.len().max(1),
-            "No choices",
+            "无可选项",
         );
 
         cursor_y = cursor_y.saturating_add(rows_height);
@@ -274,7 +274,7 @@ impl RequestUserInputOverlay {
                 Line::from(base.dim())
             }
         } else {
-            Line::from("No questions".dim())
+            Line::from("暂无问题".dim())
         };
         Paragraph::new(progress_line).render(sections.progress_area, buf);
 
@@ -322,7 +322,7 @@ impl RequestUserInputOverlay {
                     &option_rows,
                     &options_state,
                     option_rows.len().max(1),
-                    "No options",
+                    "无选项",
                 );
             }
         }

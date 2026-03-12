@@ -1,0 +1,20 @@
+codex-rs/tui/src/app.rs:206:            crate::history_cell::new_warning_event(format!("{path}: {message}")),
+codex-rs/tui/src/app.rs:898:                .add_error_message(format!("更新实验性功能失败：{err}"));
+codex-rs/tui/src/app.rs:905:                .add_error_message(format!("打开浏览器访问 {url} 失败：{err}"));
+codex-rs/tui/src/app.rs:910:            .add_info_message(format!("已在浏览器中打开 {url}。"), None);
+codex-rs/tui/src/app.rs:1470:                .add_error_message(format!("代理线程 {thread_id} 已处于活动状态。"));
+codex-rs/tui/src/app.rs:2660:                        .add_to_history(history_cell::new_error_event(format!("错误：{err}")));
+codex-rs/tui/src/app.rs:2812:                                .add_error_message(format!("保存默认模型失败：{err}"));
+codex-rs/tui/src/app.rs:2940:                        .add_error_message(format!("设置审批策略失败：{err}"));
+codex-rs/tui/src/app.rs:2957:                        .add_error_message(format!("设置沙箱策略失败：{err}"));
+codex-rs/tui/src/app.rs:2963:                        .add_error_message(format!("设置沙箱策略失败：{err}"));
+codex-rs/tui/src/app.rs:3326:                            .add_error_message(format!("保存状态栏项目失败：{err}"));
+codex-rs/tui/src/app.rs:3361:                            .add_error_message(format!("保存主题失败：{err}"));
+codex-rs/tui/src/app.rs:3683:                        .add_error_message(format!("清理终端界面失败：{err}"));
+codex-rs/tui/src/chatwidget/realtime.rs:272:                self.add_error_message(format!("实时语音错误：{message}"));
+codex-rs/tui/src/chatwidget/realtime.rs:283:            self.add_info_message(format!("实时语音模式已关闭：{reason}"), None);
+codex-rs/tui/src/chatwidget/realtime.rs:325:                self.add_error_message(format!("启动麦克风采集失败：{err}"));
+codex-rs/tui/src/chatwidget/realtime.rs:382:                        self.add_error_message(format!("启动扬声器输出失败：{err}"));
+codex-rs/tui/src/chatwidget.rs:4291:                        self.add_error_message(format!("复制到剪贴板失败：{err}"))
+codex-rs/tui/src/chatwidget.rs:4418:                        self.add_info_message(format!("快速模式当前为 {status}。"), None);
+codex-rs/tui/src/bottom_pane/feedback_view.rs:169:                    history_cell::new_error_event(format!("上传反馈失败：{e}")),

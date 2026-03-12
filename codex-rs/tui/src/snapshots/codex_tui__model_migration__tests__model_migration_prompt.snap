@@ -8,7 +8,7 @@ expression: terminal.backend()
   Upgrade to gpt-5.2-codex for the latest and greatest
   agentic coding model.
 
-  You can continue using gpt-5.1-codex-mini if you prefer.
+  如果你愿意，也可以继续使用 gpt-5.1-codex-mini。
 
   Choose how you'd like Codex to proceed.
 

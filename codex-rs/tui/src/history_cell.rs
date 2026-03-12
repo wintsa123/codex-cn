@@ -666,7 +666,7 @@ impl HistoryCell for UnifiedExecProcessesCell {
         out.push("".into());
 
         if self.processes.is_empty() {
-            out.push("  • No background terminals running.".italic().into());
+            out.push("  • 当前没有后台终端在运行。".italic().into());
             return out;
         }
 
@@ -1067,34 +1067,32 @@ pub(crate) fn new_session_info(
     if is_first_event {
         // Help lines below the header (new copy and list)
         let help_lines: Vec<Line<'static>> = vec![
-            "  To get started, describe a task or try one of these commands:"
-                .dim()
-                .into(),
+            "  开始使用：描述一个任务，或尝试以下命令：".dim().into(),
             Line::from(""),
             Line::from(vec![
                 "  ".into(),
                 "/init".into(),
-                " - create an AGENTS.md file with instructions for Codex".dim(),
+                " - 创建带 Codex 指令的 AGENTS.md 文件".dim(),
             ]),
             Line::from(vec![
                 "  ".into(),
                 "/status".into(),
-                " - show current session configuration".dim(),
+                " - 显示当前会话配置".dim(),
             ]),
             Line::from(vec![
                 "  ".into(),
                 "/permissions".into(),
-                " - choose what Codex is allowed to do".dim(),
+                " - 设置 Codex 被允许执行的操作".dim(),
             ]),
             Line::from(vec![
                 "  ".into(),
                 "/model".into(),
-                " - choose what model and reasoning effort to use".dim(),
+                " - 选择要使用的模型与推理强度".dim(),
             ]),
             Line::from(vec![
                 "  ".into(),
                 "/review".into(),
-                " - review any changes and find issues".dim(),
+                " - 审查改动并找出问题".dim(),
             ]),
         ];
 
@@ -1114,9 +1112,9 @@ pub(crate) fn new_session_info(
         }
         if requested_model != model {
             let lines = vec![
-                "model changed:".magenta().bold().into(),
-                format!("requested: {requested_model}").into(),
-                format!("used: {model}").into(),
+                "模型已切换：".magenta().bold().into(),
+                format!("请求：{requested_model}").into(),
+                format!("实际：{model}").into(),
             ];
             parts.push(Box::new(PlainHistoryCell { lines }));
         }
@@ -1241,7 +1239,7 @@ impl HistoryCell for SessionHeaderHistoryCell {
         ];
 
         const CHANGE_MODEL_HINT_COMMAND: &str = "/model";
-        const CHANGE_MODEL_HINT_EXPLANATION: &str = " to change";
+        const CHANGE_MODEL_HINT_EXPLANATION: &str = " 可切换模型";
         const DIR_LABEL: &str = "directory:";
         let label_width = DIR_LABEL.len();
 
@@ -1700,7 +1698,7 @@ pub(crate) fn empty_mcp_output() -> PlainHistoryCell {
         "".into(),
         vec!["🔌  ".into(), "MCP Tools".bold()].into(),
         "".into(),
-        "  • No MCP servers configured.".italic().into(),
+        "  • 尚未配置 MCP 服务器。".italic().into(),
         Line::from(vec![
             "    See the ".into(),
             "\u{1b}]8;;https://developers.openai.com/codex/mcp\u{7}MCP docs\u{1b}]8;;\u{7}"
@@ -1729,7 +1727,7 @@ pub(crate) fn new_mcp_tools_output(
     ];
 
     if tools.is_empty() {
-        lines.push("  • No MCP tools available.".italic().into());
+        lines.push("  • 当前没有可用 MCP 工具。".italic().into());
         lines.push("".into());
     }
 
@@ -2180,7 +2178,7 @@ pub(crate) fn new_patch_apply_failure(stderr: String) -> PlainHistoryCell {
     let mut lines: Vec<Line<'static>> = Vec::new();
 
     // Failure title
-    lines.push(Line::from("✘ Failed to apply patch".magenta().bold()));
+    lines.push(Line::from("✘ 应用补丁失败".magenta().bold()));
 
     if !stderr.trim().is_empty() {
         let output = output_lines(
@@ -2668,7 +2666,7 @@ mod tests {
 
         let rendered = render_transcript(&cell).join("\n");
         assert!(!rendered.contains("Model just became available"));
-        assert!(rendered.contains("To get started"));
+        assert!(rendered.contains("开始使用："));
     }
 
     #[tokio::test]
@@ -3327,7 +3325,7 @@ mod tests {
             .expect("model line");
 
         assert!(model_line.contains("gpt-4o high   fast"));
-        assert!(model_line.contains("/model to change"));
+        assert!(model_line.contains("/model 可切换模型"));
     }
 
     #[test]

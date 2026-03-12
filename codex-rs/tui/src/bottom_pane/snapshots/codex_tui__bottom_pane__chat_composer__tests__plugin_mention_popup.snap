@@ -10,4 +10,4 @@ expression: terminal.backend()
 "                                                                                                    "
 "  Sample Plugin  Plugin that includes the Figma MCP server and Skills for common workflows          "
 "                                                                                                    "
-"  Press enter to insert or esc to close                                                             "
+"  按 enter 插入，按 esc 关闭                                                                        " Hidden by multi-width symbols: [(3, " "), (12, " "), (14, " "), (16, " "), (18, " "), (25, " "), (27, " ")]

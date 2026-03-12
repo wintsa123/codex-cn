@@ -329,10 +329,7 @@ async fn collect_attempt_diffs(
     }
     attempts.sort_by(cmp_attempt);
     if attempts.is_empty() {
-        anyhow::bail!(
-            "No diff available for task {}; it may still be running.",
-            task_id.0
-        );
+        anyhow::bail!("任务 {} 暂无 diff，可能仍在运行中。", task_id.0);
     }
     Ok(attempts)
 }
@@ -342,7 +339,7 @@ fn select_attempt(
     attempt: Option<usize>,
 ) -> anyhow::Result<&AttemptDiffData> {
     if attempts.is_empty() {
-        anyhow::bail!("No attempts available");
+        anyhow::bail!("没有可用尝试记录");
     }
     let desired = attempt.unwrap_or(1);
     let idx = desired
@@ -350,7 +347,7 @@ fn select_attempt(
         .ok_or_else(|| anyhow!("attempt must be at least 1"))?;
     if idx >= attempts.len() {
         anyhow::bail!(
-            "Attempt {desired} not available; only {} attempt(s) found",
+            "尝试 {desired} 不可用；仅找到 {} 条尝试记录",
             attempts.len()
         );
     }
@@ -368,7 +365,7 @@ fn task_status_label(status: &TaskStatus) -> &'static str {
 
 fn summary_line(summary: &codex_cloud_tasks_client::DiffSummary, colorize: bool) -> String {
     if summary.files_changed == 0 && summary.lines_added == 0 && summary.lines_removed == 0 {
-        let base = "no diff";
+        let base = "无 diff";
         return if colorize {
             base.if_supports_color(Stream::Stdout, |t| t.dimmed())
                 .to_string()
@@ -552,7 +549,7 @@ async fn run_list_command(args: crate::cli::ListCommand) -> anyhow::Result<()> {
         return Ok(());
     }
     if page.tasks.is_empty() {
-        println!("No tasks found.");
+        println!("未找到任务。");
         return Ok(());
     }
     let now = Utc::now();
@@ -564,11 +561,11 @@ async fn run_list_command(args: crate::cli::ListCommand) -> anyhow::Result<()> {
         let command = format!("codex cloud list --cursor='{cursor}'");
         if colorize {
             println!(
-                "\nTo fetch the next page, run {}",
+                "\n要获取下一页，请运行 {}",
                 command.if_supports_color(Stream::Stdout, |text| text.cyan())
             );
         } else {
-            println!("\nTo fetch the next page, run {command}");
+            println!("\n要获取下一页，请运行 {command}");
         }
     }
     Ok(())
@@ -1349,11 +1346,11 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
                                 needs_redraw = true;
                             } else if app.apply_modal.is_some() {
                                 app.apply_modal = None;
-                                app.status = "Apply canceled".to_string();
+                                app.status = "已取消应用".to_string();
                                 needs_redraw = true;
                             } else if app.new_task.is_some() {
                                 app.new_task = None;
-                                app.status = "Canceled new task".to_string();
+                                app.status = "已取消新任务".to_string();
                                 needs_redraw = true;
                             } else if app.diff_overlay.is_some() {
                                 app.diff_overlay = None;
@@ -1480,7 +1477,7 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
                             match key.code {
                                 KeyCode::Esc => {
                                     app.new_task = None;
-                                    app.status = "Canceled new task".to_string();
+                                    app.status = "已取消新任务".to_string();
                                     needs_redraw = true;
                                 }
                                 _ => {
@@ -1495,7 +1492,7 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
                                                     text.chars().count()
                                                 ));
                                                 page.submitting = true;
-                                                app.status = "Submitting new task…".to_string();
+                                                app.status = "正在提交新任务…".to_string();
                                                 let tx = tx.clone();
                                                 let backend = Arc::clone(&backend);
                                                 let best_of_n = page.best_of_n;
@@ -1510,7 +1507,7 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
                                                     let _ = tx.send(evt);
                                                 });
                                             } else {
-                                                app.status = "No environment selected".to_string();
+                                                app.status = "未选择环境".to_string();
                                             }
                                     }
                                     needs_redraw = true;
@@ -1539,7 +1536,7 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
                                             diff_override: m.diff_override.clone(),
                                         };
                                         if spawn_apply(&mut app, &backend, &tx, &frame_tx, job) {
-                                            app.status = format!("Applying '{title}'...");
+                                            app.status = format!("正在应用“{title}”...");
                                         }
                                         needs_redraw = true;
                                     }
@@ -1561,7 +1558,7 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
                                                 conflict_paths: Vec::new(),
                                                 diff_override: m.diff_override,
                                             });
-                                            app.status = format!("Preflighting '{title}'...");
+                                            app.status = format!("正在预检“{title}”...");
                                         } else {
                                             app.apply_modal = Some(m);
                                         }
@@ -1571,7 +1568,7 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
                                 KeyCode::Esc
                                 | KeyCode::Char('n')
                                 | KeyCode::Char('q')
-                                | KeyCode::Char('Q') => { app.apply_modal = None; app.status = "Apply canceled".to_string(); needs_redraw = true; }
+                                | KeyCode::Char('Q') => { app.apply_modal = None; app.status = "已取消应用".to_string(); needs_redraw = true; }
                                 _ => {}
                             }
                         } else if app.diff_overlay.is_some() {
@@ -1581,7 +1578,7 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
                                         ov.step_attempt(delta);
                                         let total = ov.attempt_display_total();
                                         let current = ov.selected_attempt + 1;
-                                        app.status = format!("Viewing attempt {current} of {total}");
+                                        app.status = format!("正在查看第 {current}/{total} 次尝试");
                                         ov.sd.to_top();
                                         needs_redraw = true;
                                     }
@@ -1590,7 +1587,7 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
                             match key.code {
                                 KeyCode::Char('a') => {
                                     if app.apply_inflight || app.apply_preflight_inflight {
-                                        app.status = "Finish the current apply/preflight before starting another.".to_string();
+                                        app.status = "请先完成当前应用/预检，再开始新的操作。".to_string();
                                         needs_redraw = true;
                                         continue;
                                     }
@@ -1618,10 +1615,10 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
                                                     conflict_paths: Vec::new(),
                                                     diff_override,
                                                 });
-                                                app.status = format!("Preflighting '{title}'...");
+                                                app.status = format!("正在预检“{title}”...");
                                             }
                                         } else {
-                                            app.status = "No diff available to apply.".to_string();
+                                            app.status = "没有可应用的 diff。".to_string();
                                         }
                                         needs_redraw = true;
                                     }
@@ -1931,7 +1928,7 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
                                 }
                                 KeyCode::Char('a') => {
                                     if app.apply_inflight || app.apply_preflight_inflight {
-                                        app.status = "Finish the current apply/preflight before starting another.".to_string();
+                                        app.status = "请先完成当前应用/预检，再开始新的操作。".to_string();
                                         needs_redraw = true;
                                         continue;
                                     }
@@ -1963,11 +1960,11 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
                                                         conflict_paths: Vec::new(),
                                                         diff_override,
                                                     });
-                                                    app.status = format!("Preflighting '{title}'...");
+                                                    app.status = format!("正在预检“{title}”...");
                                                 }
                                             }
                                             Ok(None) | Err(_) => {
-                                                app.status = "No diff available to apply".to_string();
+                                                app.status = "没有可应用的 diff".to_string();
                                             }
                                         }
                                         needs_redraw = true;
@@ -2013,14 +2010,14 @@ pub async fn run_main(cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> an
 fn conversation_lines(prompt: Option<String>, messages: &[String]) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     if let Some(p) = prompt {
-        out.push("user:".to_string());
+        out.push("用户：".to_string());
         for l in p.lines() {
             out.push(l.to_string());
         }
         out.push(String::new());
     }
     if !messages.is_empty() {
-        out.push("assistant:".to_string());
+        out.push("助手：".to_string());
         for (i, m) in messages.iter().enumerate() {
             for l in m.lines() {
                 out.push(l.to_string());
@@ -2031,7 +2028,7 @@ fn conversation_lines(prompt: Option<String>, messages: &[String]) -> Vec<String
         }
     }
     if out.is_empty() {
-        out.push("<no output>".to_string());
+        out.push("<无输出>".to_string());
     }
     out
 }
@@ -2043,11 +2040,11 @@ fn pretty_lines_from_error(raw: &str) -> Vec<String> {
     let is_no_diff = raw.contains("No output_diff in response.");
     let is_no_msgs = raw.contains("No assistant text messages in response.");
     if is_no_diff {
-        lines.push("No diff available for this task.".to_string());
+        lines.push("该任务暂无 diff。".to_string());
     } else if is_no_msgs {
-        lines.push("No assistant messages found for this task.".to_string());
+        lines.push("该任务未找到助手消息。".to_string());
     } else {
-        lines.push("Failed to load task details.".to_string());
+        lines.push("加载任务详情失败。".to_string());
     }
 
     // Try to parse the embedded JSON body: find the first '{' after " body=" and decode.
@@ -2079,7 +2076,7 @@ fn pretty_lines_from_error(raw: &str) -> Vec<String> {
                         } else {
                             format!("{code}: {msg}")
                         };
-                        lines.push(format!("Assistant error: {summary}"));
+                        lines.push(format!("助手错误：{summary}"));
                     }
                 }
                 if let Some(status) = t.get("turn_status").and_then(|s| s.as_str()) {
@@ -2262,7 +2259,7 @@ mod tests {
             vec![
                 "[PENDING] No diff task".to_string(),
                 "env-2  •  0s ago".to_string(),
-                "no diff".to_string(),
+                "无 diff".to_string(),
             ]
         );
     }
@@ -2310,7 +2307,7 @@ mod tests {
                 "https://chatgpt.com/codex/tasks/task_2".to_string(),
                 "  [PENDING] No diff task".to_string(),
                 "  env-2  •  0s ago".to_string(),
-                "  no diff".to_string(),
+                "  无 diff".to_string(),
             ]
         );
     }

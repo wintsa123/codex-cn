@@ -115,7 +115,7 @@ mod pending_interactive_replay;
 
 use self::pending_interactive_replay::PendingInteractiveReplayState;
 
-const EXTERNAL_EDITOR_HINT: &str = "Save and close external editor to continue.";
+const EXTERNAL_EDITOR_HINT: &str = "保存并关闭外部编辑器以继续。";
 const THREAD_EVENT_CHANNEL_CAPACITY: usize = 32768;
 
 enum ThreadInteractiveRequest {
@@ -195,7 +195,7 @@ fn emit_skill_load_warnings(app_event_tx: &AppEventSender, errors: &[SkillErrorI
     let error_count = errors.len();
     app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
         crate::history_cell::new_warning_event(format!(
-            "Skipped loading {error_count} skill(s) due to invalid SKILL.md files."
+            "由于 SKILL.md 文件无效，已跳过加载 {error_count} 个技能。"
         )),
     )));
 
@@ -227,7 +227,7 @@ fn emit_project_config_warnings(app_event_tx: &AppEventSender, config: &Config) 
                 .disabled_reason
                 .as_ref()
                 .map(ToString::to_string)
-                .unwrap_or_else(|| "config.toml is disabled.".to_string()),
+                .unwrap_or_else(|| "config.toml 已禁用。".to_string()),
         ));
     }
 
@@ -236,8 +236,8 @@ fn emit_project_config_warnings(app_event_tx: &AppEventSender, config: &Config) 
     }
 
     let mut message = concat!(
-        "Project config.toml files are disabled in the following folders. ",
-        "Settings in those files are ignored, but skills and exec policies still load.\n",
+        "以下目录中的项目级 config.toml 已被禁用。 ",
+        "这些文件中的设置将被忽略，但技能与执行策略仍会加载。\n",
     )
     .to_string();
     for (index, (folder, reason)) in disabled_folders.iter().enumerate() {
@@ -814,17 +814,15 @@ impl App {
             && let Err(err) = config.permissions.approval_policy.set(*policy)
         {
             tracing::warn!(%err, "failed to carry forward approval policy override");
-            self.chat_widget.add_error_message(format!(
-                "Failed to carry forward approval policy override: {err}"
-            ));
+            self.chat_widget
+                .add_error_message(format!("沿用审批策略覆盖失败：{err}"));
         }
         if let Some(policy) = self.runtime_sandbox_policy_override.as_ref()
             && let Err(err) = config.permissions.sandbox_policy.set(policy.clone())
         {
             tracing::warn!(%err, "failed to carry forward sandbox policy override");
-            self.chat_widget.add_error_message(format!(
-                "Failed to carry forward sandbox policy override: {err}"
-            ));
+            self.chat_widget
+                .add_error_message(format!("沿用沙箱策略覆盖失败：{err}"));
         }
     }
 
@@ -850,9 +848,8 @@ impl App {
                     feature = feature_key,
                     "failed to update constrained feature flags"
                 );
-                self.chat_widget.add_error_message(format!(
-                    "Failed to update experimental feature `{feature_key}`: {err}"
-                ));
+                self.chat_widget
+                    .add_error_message(format!("更新实验性功能 `{feature_key}` 失败：{err}"));
                 continue;
             }
             let effective_enabled = self.config.features.enabled(feature);
@@ -895,19 +892,19 @@ impl App {
         if let Err(err) = builder.apply().await {
             tracing::error!(error = %err, "failed to persist feature flags");
             self.chat_widget
-                .add_error_message(format!("Failed to update experimental features: {err}"));
+                .add_error_message(format!("更新实验性功能失败：{err}"));
         }
     }
 
     fn open_url_in_browser(&mut self, url: String) {
         if let Err(err) = webbrowser::open(&url) {
             self.chat_widget
-                .add_error_message(format!("Failed to open browser for {url}: {err}"));
+                .add_error_message(format!("打开浏览器访问 {url} 失败：{err}"));
             return;
         }
 
         self.chat_widget
-            .add_info_message(format!("Opened {url} in your browser."), None);
+            .add_info_message(format!("已在浏览器中打开 {url}。"), None);
     }
 
     fn clear_ui_header_lines_with_version(
@@ -1195,16 +1192,14 @@ impl App {
                 Ok(thread) => match thread.submit(op).await {
                     Ok(_) => true,
                     Err(err) => {
-                        self.chat_widget.add_error_message(format!(
-                            "Failed to submit op to thread {thread_id}: {err}"
-                        ));
+                        self.chat_widget
+                            .add_error_message(format!("向线程 {thread_id} 提交操作失败：{err}"));
                         false
                     }
                 },
                 Err(err) => {
-                    self.chat_widget.add_error_message(format!(
-                        "Failed to find thread {thread_id} for approval response: {err}"
-                    ));
+                    self.chat_widget
+                        .add_error_message(format!("未找到用于审批响应的线程 {thread_id}：{err}"));
                     false
                 }
             }
@@ -1364,7 +1359,7 @@ impl App {
 
         if self.agent_picker_threads.is_empty() {
             self.chat_widget
-                .add_info_message("No agents available yet.".to_string(), None);
+                .add_info_message("当前还没有可用代理。".to_string(), None);
             return;
         }
 
@@ -1407,8 +1402,8 @@ impl App {
             .collect();
 
         self.chat_widget.show_selection_view(SelectionViewParams {
-            title: Some("Multi-agents".to_string()),
-            subtitle: Some("Select an agent to watch".to_string()),
+            title: Some("多代理".to_string()),
+            subtitle: Some("选择要查看的代理".to_string()),
             footer_hint: Some(standard_popup_hint_line()),
             items,
             initial_selected_idx,
@@ -1453,9 +1448,8 @@ impl App {
                     self.mark_agent_picker_thread_closed(thread_id);
                     None
                 } else {
-                    self.chat_widget.add_error_message(format!(
-                        "Failed to attach to agent thread {thread_id}: {err}"
-                    ));
+                    self.chat_widget
+                        .add_error_message(format!("附加到代理线程 {thread_id} 失败：{err}"));
                     return Ok(());
                 }
             }
@@ -1467,7 +1461,7 @@ impl App {
         self.active_thread_id = None;
         let Some((receiver, snapshot)) = self.activate_thread_for_replay(thread_id).await else {
             self.chat_widget
-                .add_error_message(format!("Agent thread {thread_id} is already active."));
+                .add_error_message(format!("代理线程 {thread_id} 已处于活动状态。"));
             if let Some(previous_thread_id) = previous_thread_id {
                 self.activate_thread_channel(previous_thread_id).await;
             }
@@ -1490,7 +1484,7 @@ impl App {
         self.replay_thread_snapshot(snapshot, !is_replay_only);
         if is_replay_only {
             self.chat_widget.add_info_message(
-                format!("Agent thread {thread_id} is closed. Replaying saved transcript."),
+                format!("代理线程 {thread_id} 已关闭，正在回放已保存的会话记录。"),
                 None,
             );
         }
@@ -1561,7 +1555,7 @@ impl App {
         if let Some(summary) = summary {
             let mut lines: Vec<Line<'static>> = vec![summary.usage_line.clone().into()];
             if let Some(command) = summary.resume_command {
-                let spans = vec!["To continue this session, run ".into(), command.cyan()];
+                let spans = vec!["要继续此会话，请运行 ".into(), command.cyan()];
                 lines.push(spans.into());
             }
             self.chat_widget.add_plain_history_lines(lines);
@@ -2134,9 +2128,8 @@ impl App {
                         {
                             Ok(cfg) => cfg,
                             Err(err) => {
-                                self.chat_widget.add_error_message(format!(
-                                    "Failed to rebuild configuration for resume: {err}"
-                                ));
+                                self.chat_widget
+                                    .add_error_message(format!("为恢复会话重建配置失败：{err}"));
                                 return Ok(AppRunControl::Continue);
                             }
                         };
@@ -2174,10 +2167,8 @@ impl App {
                                     let mut lines: Vec<Line<'static>> =
                                         vec![summary.usage_line.clone().into()];
                                     if let Some(command) = summary.resume_command {
-                                        let spans = vec![
-                                            "To continue this session, run ".into(),
-                                            command.cyan(),
-                                        ];
+                                        let spans =
+                                            vec!["要继续此会话，请运行 ".into(), command.cyan()];
                                         lines.push(spans.into());
                                     }
                                     self.chat_widget.add_plain_history_lines(lines);
@@ -2186,7 +2177,7 @@ impl App {
                             Err(err) => {
                                 let path_display = target_session.path.display();
                                 self.chat_widget.add_error_message(format!(
-                                    "Failed to resume session from {path_display}: {err}"
+                                    "从 {path_display} 恢复会话失败：{err}"
                                 ));
                             }
                         }
@@ -2239,10 +2230,8 @@ impl App {
                                     let mut lines: Vec<Line<'static>> =
                                         vec![summary.usage_line.clone().into()];
                                     if let Some(command) = summary.resume_command {
-                                        let spans = vec![
-                                            "To continue this session, run ".into(),
-                                            command.cyan(),
-                                        ];
+                                        let spans =
+                                            vec!["要继续此会话，请运行 ".into(), command.cyan()];
                                         lines.push(spans.into());
                                     }
                                     self.chat_widget.add_plain_history_lines(lines);
@@ -2251,21 +2240,17 @@ impl App {
                             Err(err) => {
                                 let path_display = path.display();
                                 self.chat_widget.add_error_message(format!(
-                                    "Failed to fork current session from {path_display}: {err}"
+                                    "从 {path_display} 分叉当前会话失败：{err}"
                                 ));
                             }
                         }
                     } else {
-                        self.chat_widget.add_error_message(
-                            "A thread must contain at least one turn before it can be forked."
-                                .to_string(),
-                        );
+                        self.chat_widget
+                            .add_error_message("线程至少需要包含一轮对话后才能分叉。".to_string());
                     }
                 } else {
-                    self.chat_widget.add_error_message(
-                        "A thread must contain at least one turn before it can be forked."
-                            .to_string(),
-                    );
+                    self.chat_widget
+                        .add_error_message("线程至少需要包含一轮对话后才能分叉。".to_string());
                 }
 
                 tui.frame_requester().schedule_frame();
@@ -2615,7 +2600,7 @@ impl App {
                 {
                     self.chat_widget
                         .add_to_history(history_cell::new_info_event(
-                            format!("Granting sandbox read access to {path} ..."),
+                            format!("正在为 {path} 授予沙箱读取权限..."),
                             None,
                         ));
 
@@ -2657,12 +2642,12 @@ impl App {
             AppEvent::WindowsSandboxGrantReadRootCompleted { path, error } => match error {
                 Some(err) => {
                     self.chat_widget
-                        .add_to_history(history_cell::new_error_event(format!("Error: {err}")));
+                        .add_to_history(history_cell::new_error_event(format!("错误：{err}")));
                 }
                 None => {
                     self.chat_widget
                         .add_to_history(history_cell::new_info_event(
-                            format!("Sandbox read access granted for {}", path.display()),
+                            format!("已为 {} 授予沙箱读取权限", path.display()),
                             None,
                         ));
                 }
@@ -2748,10 +2733,10 @@ impl App {
                                     .send(AppEvent::UpdateSandboxPolicy(preset.sandbox.clone()));
                                 let _ = mode;
                                 self.chat_widget.add_plain_history_lines(vec![
-                                    Line::from(vec!["• ".dim(), "Sandbox ready".into()]),
+                                    Line::from(vec!["• ".dim(), "沙箱已就绪".into()]),
                                     Line::from(vec![
                                         "  ".into(),
-                                        "Codex can now safely edit files and execute commands in your computer"
+                                        "Codex 现在可以在你的电脑上安全地编辑文件并执行命令"
                                             .dark_gray(),
                                     ]),
                                 ]);
@@ -2762,9 +2747,8 @@ impl App {
                                 error = %err,
                                 "failed to enable Windows sandbox feature"
                             );
-                            self.chat_widget.add_error_message(format!(
-                                "Failed to enable the Windows sandbox feature: {err}"
-                            ));
+                            self.chat_widget
+                                .add_error_message(format!("启用 Windows 沙箱功能失败：{err}"));
                         }
                     }
                 }
@@ -2786,15 +2770,15 @@ impl App {
                             .map(|selected_effort| selected_effort.to_string())
                             .unwrap_or_else(|| "default".to_string());
                         tracing::info!("Selected model: {model}, Selected effort: {effort_label}");
-                        let mut message = format!("Model changed to {model}");
+                        let mut message = format!("模型已切换为 {model}");
                         if let Some(label) = Self::reasoning_label_for(&model, effort) {
                             message.push(' ');
                             message.push_str(label);
                         }
                         if let Some(profile) = profile {
-                            message.push_str(" for ");
+                            message.push_str("（配置档：");
                             message.push_str(profile);
-                            message.push_str(" profile");
+                            message.push('）');
                         }
                         self.chat_widget.add_info_message(message, None);
                     }
@@ -2805,11 +2789,11 @@ impl App {
                         );
                         if let Some(profile) = profile {
                             self.chat_widget.add_error_message(format!(
-                                "Failed to save model for profile `{profile}`: {err}"
+                                "保存配置档 `{profile}` 的模型失败：{err}"
                             ));
                         } else {
                             self.chat_widget
-                                .add_error_message(format!("Failed to save default model: {err}"));
+                                .add_error_message(format!("保存默认模型失败：{err}"));
                         }
                     }
                 }
@@ -2824,11 +2808,11 @@ impl App {
                 {
                     Ok(()) => {
                         let label = Self::personality_label(personality);
-                        let mut message = format!("Personality set to {label}");
+                        let mut message = format!("人格已设置为 {label}");
                         if let Some(profile) = profile {
-                            message.push_str(" for ");
+                            message.push_str("（配置档：");
                             message.push_str(profile);
-                            message.push_str(" profile");
+                            message.push('）');
                         }
                         self.chat_widget.add_info_message(message, None);
                     }
@@ -2839,12 +2823,11 @@ impl App {
                         );
                         if let Some(profile) = profile {
                             self.chat_widget.add_error_message(format!(
-                                "Failed to save personality for profile `{profile}`: {err}"
+                                "保存配置档 `{profile}` 的人格失败：{err}"
                             ));
                         } else {
-                            self.chat_widget.add_error_message(format!(
-                                "Failed to save default personality: {err}"
-                            ));
+                            self.chat_widget
+                                .add_error_message(format!("保存默认人格失败：{err}"));
                         }
                     }
                 }
@@ -2860,11 +2843,11 @@ impl App {
                 {
                     Ok(()) => {
                         let status = if service_tier.is_some() { "on" } else { "off" };
-                        let mut message = format!("Fast mode set to {status}");
+                        let mut message = format!("快速模式已设置为 {status}");
                         if let Some(profile) = profile {
-                            message.push_str(" for ");
+                            message.push_str("（配置档：");
                             message.push_str(profile);
-                            message.push_str(" profile");
+                            message.push('）');
                         }
                         self.chat_widget.add_info_message(message, None);
                     }
@@ -2872,12 +2855,11 @@ impl App {
                         tracing::error!(error = %err, "failed to persist fast mode selection");
                         if let Some(profile) = profile {
                             self.chat_widget.add_error_message(format!(
-                                "Failed to save Fast mode for profile `{profile}`: {err}"
+                                "保存配置档 `{profile}` 的快速模式失败：{err}"
                             ));
                         } else {
-                            self.chat_widget.add_error_message(format!(
-                                "Failed to save default Fast mode: {err}"
-                            ));
+                            self.chat_widget
+                                .add_error_message(format!("保存默认快速模式失败：{err}"));
                         }
                     }
                 }
@@ -2910,9 +2892,9 @@ impl App {
                         if self.chat_widget.realtime_conversation_is_live() {
                             self.chat_widget.open_realtime_audio_restart_prompt(kind);
                         } else {
-                            let selection = name.unwrap_or_else(|| "System default".to_string());
+                            let selection = name.unwrap_or_else(|| "系统默认".to_string());
                             self.chat_widget.add_info_message(
-                                format!("Realtime {} set to {selection}", kind.noun()),
+                                format!("实时{}已设置为 {selection}", kind.noun()),
                                 None,
                             );
                         }
@@ -2922,10 +2904,8 @@ impl App {
                             error = %err,
                             "failed to persist realtime audio selection"
                         );
-                        self.chat_widget.add_error_message(format!(
-                            "Failed to save realtime {}: {err}",
-                            kind.noun()
-                        ));
+                        self.chat_widget
+                            .add_error_message(format!("保存实时{}配置失败：{err}", kind.noun()));
                     }
                 }
             }
@@ -2937,7 +2917,7 @@ impl App {
                 if let Err(err) = self.config.permissions.approval_policy.set(policy) {
                     tracing::warn!(%err, "failed to set approval policy on app config");
                     self.chat_widget
-                        .add_error_message(format!("Failed to set approval policy: {err}"));
+                        .add_error_message(format!("设置审批策略失败：{err}"));
                     return Ok(AppRunControl::Continue);
                 }
                 self.chat_widget.set_approval_policy(policy);
@@ -2954,13 +2934,13 @@ impl App {
                 if let Err(err) = self.config.permissions.sandbox_policy.set(policy) {
                     tracing::warn!(%err, "failed to set sandbox policy on app config");
                     self.chat_widget
-                        .add_error_message(format!("Failed to set sandbox policy: {err}"));
+                        .add_error_message(format!("设置沙箱策略失败：{err}"));
                     return Ok(AppRunControl::Continue);
                 }
                 if let Err(err) = self.chat_widget.set_sandbox_policy(policy_for_chat) {
                     tracing::warn!(%err, "failed to set sandbox policy on chat config");
                     self.chat_widget
-                        .add_error_message(format!("Failed to set sandbox policy: {err}"));
+                        .add_error_message(format!("设置沙箱策略失败：{err}"));
                     return Ok(AppRunControl::Continue);
                 }
                 self.runtime_sandbox_policy_override =
@@ -3027,9 +3007,8 @@ impl App {
                         error = %err,
                         "failed to persist full access warning acknowledgement"
                     );
-                    self.chat_widget.add_error_message(format!(
-                        "Failed to save full access confirmation preference: {err}"
-                    ));
+                    self.chat_widget
+                        .add_error_message(format!("保存完全访问确认偏好失败：{err}"));
                 }
             }
             AppEvent::PersistWorldWritableWarningAcknowledged => {
@@ -3042,9 +3021,8 @@ impl App {
                         error = %err,
                         "failed to persist world-writable warning acknowledgement"
                     );
-                    self.chat_widget.add_error_message(format!(
-                        "Failed to save Agent mode warning preference: {err}"
-                    ));
+                    self.chat_widget
+                        .add_error_message(format!("保存代理模式警告偏好失败：{err}"));
                 }
             }
             AppEvent::PersistRateLimitSwitchPromptHidden => {
@@ -3057,9 +3035,8 @@ impl App {
                         error = %err,
                         "failed to persist rate limit switch prompt preference"
                     );
-                    self.chat_widget.add_error_message(format!(
-                        "Failed to save rate limit reminder preference: {err}"
-                    ));
+                    self.chat_widget
+                        .add_error_message(format!("保存限流提醒偏好失败：{err}"));
                 }
             }
             AppEvent::PersistPlanModeReasoningEffort(effort) => {
@@ -3092,12 +3069,11 @@ impl App {
                     );
                     if let Some(profile) = profile {
                         self.chat_widget.add_error_message(format!(
-                            "Failed to save Plan mode reasoning effort for profile `{profile}`: {err}"
+                            "保存配置档 `{profile}` 的计划模式推理强度失败：{err}"
                         ));
                     } else {
-                        self.chat_widget.add_error_message(format!(
-                            "Failed to save Plan mode reasoning effort: {err}"
-                        ));
+                        self.chat_widget
+                            .add_error_message(format!("保存计划模式推理强度失败：{err}"));
                     }
                 }
             }
@@ -3114,9 +3090,8 @@ impl App {
                         error = %err,
                         "failed to persist model migration prompt acknowledgement"
                     );
-                    self.chat_widget.add_error_message(format!(
-                        "Failed to save model migration prompt preference: {err}"
-                    ));
+                    self.chat_widget
+                        .add_error_message(format!("保存模型迁移提示偏好失败：{err}"));
                 }
             }
             AppEvent::OpenApprovalsPopup => {
@@ -3156,7 +3131,7 @@ impl App {
                     Err(err) => {
                         let path_display = path.display();
                         self.chat_widget.add_error_message(format!(
-                            "Failed to update skill config for {path_display}: {err}"
+                            "更新 {path_display} 的技能配置失败：{err}"
                         ));
                     }
                 }
@@ -3204,9 +3179,8 @@ impl App {
                         self.chat_widget.submit_op(Op::ReloadUserConfig);
                     }
                     Err(err) => {
-                        self.chat_widget.add_error_message(format!(
-                            "Failed to update app config for {id}: {err}"
-                        ));
+                        self.chat_widget
+                            .add_error_message(format!("更新应用 {id} 配置失败：{err}"));
                     }
                 }
             }
@@ -3258,16 +3232,13 @@ impl App {
                     let _ = tui.enter_alt_screen();
                     let mut lines = Vec::new();
                     if let Some(reason) = reason {
-                        lines.push(Line::from(vec!["Reason: ".into(), reason.italic()]));
+                        lines.push(Line::from(vec!["原因：".into(), reason.italic()]));
                         lines.push(Line::from(""));
                     }
                     if let Some(rule_line) =
                         crate::bottom_pane::format_additional_permissions_rule(&permissions)
                     {
-                        lines.push(Line::from(vec![
-                            "Permission rule: ".into(),
-                            rule_line.cyan(),
-                        ]));
+                        lines.push(Line::from(vec!["权限规则：".into(), rule_line.cyan()]));
                     }
                     self.overlay = Some(Overlay::new_static_with_renderables(
                         vec![Box::new(Paragraph::new(lines).wrap(Wrap { trim: false }))],
@@ -3281,7 +3252,7 @@ impl App {
                 } => {
                     let _ = tui.enter_alt_screen();
                     let paragraph = Paragraph::new(vec![
-                        Line::from(vec!["Server: ".into(), server_name.bold()]),
+                        Line::from(vec!["服务器：".into(), server_name.bold()]),
                         Line::from(""),
                         Line::from(message),
                     ])
@@ -3323,7 +3294,7 @@ impl App {
                     Err(err) => {
                         tracing::error!(error = %err, "failed to persist status line items; keeping previous selection");
                         self.chat_widget
-                            .add_error_message(format!("Failed to save status line items: {err}"));
+                            .add_error_message(format!("保存状态栏项目失败：{err}"));
                     }
                 }
             }
@@ -3358,7 +3329,7 @@ impl App {
                         self.restore_runtime_theme_from_config();
                         tracing::error!(error = %err, "failed to persist theme selection");
                         self.chat_widget
-                            .add_error_message(format!("Failed to save theme: {err}"));
+                            .add_error_message(format!("保存主题失败：{err}"));
                     }
                 }
             }
@@ -3442,15 +3413,13 @@ impl App {
             self.select_agent_thread(tui, primary_thread_id).await?;
             if self.active_thread_id == Some(primary_thread_id) {
                 self.chat_widget.add_info_message(
-                    format!(
-                        "Agent thread {closed_thread_id} closed. Switched back to main thread."
-                    ),
+                    format!("代理线程 {closed_thread_id} 已关闭，已切回主线程。"),
                     None,
                 );
             } else {
                 self.clear_active_thread().await;
                 self.chat_widget.add_error_message(format!(
-                    "Agent thread {closed_thread_id} closed. Failed to switch back to main thread {primary_thread_id}.",
+                    "代理线程 {closed_thread_id} 已关闭，但切回主线程 {primary_thread_id} 失败。",
                 ));
             }
             return Ok(());
@@ -3598,16 +3567,16 @@ impl App {
             Err(external_editor::EditorError::MissingEditor) => {
                 self.chat_widget
                     .add_to_history(history_cell::new_error_event(
-                    "Cannot open external editor: set $VISUAL or $EDITOR before starting Codex."
-                        .to_string(),
-                ));
+                        "无法打开外部编辑器：请在启动 Codex 前设置 $VISUAL 或 $EDITOR。"
+                            .to_string(),
+                    ));
                 self.reset_external_editor_state(tui);
                 return;
             }
             Err(err) => {
                 self.chat_widget
                     .add_to_history(history_cell::new_error_event(format!(
-                        "Failed to open editor: {err}",
+                        "打开编辑器失败：{err}",
                     )));
                 self.reset_external_editor_state(tui);
                 return;
@@ -3631,7 +3600,7 @@ impl App {
             Err(err) => {
                 self.chat_widget
                     .add_to_history(history_cell::new_error_event(format!(
-                        "Failed to open editor: {err}",
+                        "打开编辑器失败：{err}",
                     )));
             }
         }
@@ -3680,7 +3649,7 @@ impl App {
                 if let Err(err) = self.clear_terminal_ui(tui, false) {
                     tracing::warn!(error = %err, "failed to clear terminal UI");
                     self.chat_widget
-                        .add_error_message(format!("Failed to clear terminal UI: {err}"));
+                        .add_error_message(format!("清理终端界面失败：{err}"));
                 } else {
                     self.reset_app_ui_state_after_clear();
                     self.queue_clear_ui_header(tui);

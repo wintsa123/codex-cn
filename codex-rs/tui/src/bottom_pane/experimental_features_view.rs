@@ -51,9 +51,9 @@ impl ExperimentalFeaturesView {
         app_event_tx: AppEventSender,
     ) -> Self {
         let mut header = ColumnRenderable::new();
-        header.push(Line::from("Experimental features".bold()));
+        header.push(Line::from("实验性功能".bold()));
         header.push(Line::from(
-            "Toggle experimental features. Changes are saved to config.toml.".dim(),
+            "切换实验性功能。变更会保存到 config.toml。".dim(),
         ));
 
         let mut view = Self {

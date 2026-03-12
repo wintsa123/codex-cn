@@ -9,7 +9,7 @@ expression: terminal.backend()
   gpt-5.1-codex-mini.
 
   Optimized for codex. Cheaper, faster, but less capable.
-  Learn more about gpt-5.1-codex-mini at
-  https://www.codex.com/models/gpt-5.1-codex-mini
+  了解更多 gpt-5.1-codex-mini
+  信息：https://www.codex.com/models/gpt-5.1-codex-mini
 
-  Press enter to continue
+  按 Enter 继续

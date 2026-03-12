@@ -1,12 +1,11 @@
 ---
 source: tui/src/chatwidget/tests.rs
-assertion_line: 6001
 expression: popup
 ---
-  Enable multi-agent?
-  Multi-agent is currently disabled in your config.
+  要 启 用 多 代 理 吗 ？
+  你 的 配 置 中 当 前 禁 用 了 多 代 理 。
 
-› 1. Yes, enable  Save the setting now. You will need a new session to use it.
-  2. Not now      Keep multi-agent disabled.
+› 1. 是 ， 启 用   立 即 保 存 该 设 置 。 你 需 要 新 建 会 话 后 才 能 使 用 。
+  2. 暂 不 启 用   保 持 多 代 理 禁 用 。
 
   Press enter to confirm or esc to go back

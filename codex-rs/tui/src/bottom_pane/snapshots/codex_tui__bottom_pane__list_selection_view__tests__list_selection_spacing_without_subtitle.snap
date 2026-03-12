@@ -3,7 +3,7 @@ source: tui/src/bottom_pane/list_selection_view.rs
 expression: render_lines(&view)
 ---
                                                 
-  Select Approval Mode                          
+  选 择 审 批 模 式                                   
                                                 
 › 1. Read Only (current)  Codex can read files  
   2. Full Access          Codex can edit files  

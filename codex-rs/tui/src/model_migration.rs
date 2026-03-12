@@ -109,7 +109,7 @@ pub(crate) fn migration_copy_for_models(
 
     if let Some(model_link) = model_link {
         content.push(Line::from(vec![
-            format!("{description_line} Learn more about {target_display_name} at ").into(),
+            format!("{description_line} 了解更多 {target_display_name} 信息：").into(),
             model_link.cyan().underlined(),
         ]));
         content.push(Line::from(""));
@@ -120,10 +120,10 @@ pub(crate) fn migration_copy_for_models(
 
     if can_opt_out {
         content.push(Line::from(format!(
-            "You can continue using {current_model} if you prefer."
+            "如果你愿意，也可以继续使用 {current_model}。"
         )));
     } else {
-        content.push(Line::from("Press enter to continue".dim()));
+        content.push(Line::from("按 Enter 继续".dim()));
     }
 
     ModelMigrationCopy {

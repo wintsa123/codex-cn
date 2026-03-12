@@ -135,9 +135,9 @@ impl WidgetRef for &FileSearchPopup {
         };
 
         let empty_message = if self.waiting {
-            "loading..."
+            "加载中..."
         } else {
-            "no matches"
+            "无匹配结果"
         };
 
         render_rows(

@@ -346,7 +346,7 @@ fn wait_complete_lines(
     agent_statuses: &[CollabAgentStatusEntry],
 ) -> Vec<Line<'static>> {
     if statuses.is_empty() && agent_statuses.is_empty() {
-        return vec![Line::from(Span::from("No agents completed yet"))];
+        return vec![Line::from(Span::from("尚无已完成的代理"))];
     }
 
     let entries = if agent_statuses.is_empty() {

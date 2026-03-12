@@ -2,12 +2,10 @@
 source: tui/src/chatwidget/tests.rs
 expression: popup
 ---
-  How was this?
+  这 次 结 果 怎 么 样 ？
 
-› 1. bug           Crash, error message, hang, or broken UI/behavior.
-  2. bad result    Output was off-target, incorrect, incomplete, or unhelpful.
-  3. good result   Helpful, correct, high‑quality, or delightful result worth
-                   celebrating.
-  4. safety check  Benign usage blocked due to safety checks or refusals.
-  5. other         Slowness, feature suggestion, UX feedback, or anything
-                   else.
+› 1. 问 题 反 馈   崩 溃 、 报 错 、 卡 住 ， 或 界 面 /行 为 异 常 。
+  2. 结 果 不 佳   输 出 偏 题 、 不 正 确 、 不 完 整 ， 或 没 有 帮 助 。
+  3. 结 果 很 好   结 果 有 帮 助 、 正 确 、 高 质 量 ， 或 让 人 满 意 ， 值 得 表 扬 。
+  4. 安 全 检 查   正 常 使 用 场 景 因 安 全 检 查 或 拒 绝 策 略 被 拦 截 。
+  5. 其 他       速 度 慢 、 功 能 建 议 、 体 验 反 馈 ， 或 其 他 任 何 问 题 。

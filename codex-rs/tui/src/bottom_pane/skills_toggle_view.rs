@@ -31,7 +31,7 @@ use super::scroll_state::ScrollState;
 use super::selection_popup_common::GenericDisplayRow;
 use super::selection_popup_common::render_rows_single_line;
 
-const SEARCH_PLACEHOLDER: &str = "Type to search skills";
+const SEARCH_PLACEHOLDER: &str = "输入以搜索技能";
 const SEARCH_PROMPT_PREFIX: &str = "> ";
 
 pub(crate) struct SkillsToggleItem {
@@ -56,10 +56,8 @@ pub(crate) struct SkillsToggleView {
 impl SkillsToggleView {
     pub(crate) fn new(items: Vec<SkillsToggleItem>, app_event_tx: AppEventSender) -> Self {
         let mut header = ColumnRenderable::new();
-        header.push(Line::from("Enable/Disable Skills".bold()));
-        header.push(Line::from(
-            "Turn skills on or off. Your changes are saved automatically.".dim(),
-        ));
+        header.push(Line::from("启用/禁用技能".bold()));
+        header.push(Line::from("开启或关闭技能。变更会自动保存。".dim()));
 
         let mut view = Self {
             items,

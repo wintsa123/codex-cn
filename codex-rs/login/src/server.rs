@@ -160,8 +160,8 @@ pub fn run_login_server(opts: ServerOptions) -> io::Result<LoginServer> {
         thread::spawn(move || -> io::Result<()> {
             while let Ok(request) = server.recv() {
                 tx.blocking_send(request).map_err(|e| {
-                    eprintln!("Failed to send request to channel: {e}");
-                    io::Error::other("Failed to send request to channel")
+                    eprintln!("向通道发送请求失败：{e}");
+                    io::Error::other("向通道发送请求失败")
                 })?;
             }
             Ok(())

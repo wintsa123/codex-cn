@@ -1858,7 +1858,7 @@ async fn make_chatwidget_manual(
         interrupts: InterruptManager::new(),
         reasoning_buffer: String::new(),
         full_reasoning_buffer: String::new(),
-        current_status_header: String::from("Working"),
+        current_status_header: String::from("处理中"),
         retry_status_header: None,
         pending_status_indicator_restore: false,
         suppress_queue_autosend: false,
@@ -9312,7 +9312,7 @@ async fn thread_snapshot_replayed_turn_started_marks_task_running() {
         .bottom_pane
         .status_widget()
         .expect("status indicator should be visible");
-    assert_eq!(status.header(), "Working");
+    assert_eq!(status.header(), "处理中");
 }
 
 #[tokio::test]
@@ -9371,7 +9371,7 @@ async fn thread_snapshot_replayed_stream_recovery_restores_previous_status_heade
         .bottom_pane
         .status_widget()
         .expect("status indicator should be visible");
-    assert_eq!(status.header(), "Working");
+    assert_eq!(status.header(), "处理中");
     assert_eq!(status.details(), None);
     assert!(chat.retry_status_header.is_none());
 }
@@ -9427,7 +9427,7 @@ async fn replayed_interrupted_reconnect_footer_row_snapshot() {
 
     let header = render_bottom_first_row(&chat, 80);
     assert!(
-        !header.contains("Reconnecting") && !header.contains("Working"),
+        !header.contains("Reconnecting") && !header.contains("处理中"),
         "expected replayed interrupted reconnect to avoid active status row, got {header:?}"
     );
     assert_snapshot!("replayed_interrupted_reconnect_footer_row", header);
@@ -9624,7 +9624,7 @@ async fn stream_recovery_restores_previous_status_header() {
         .bottom_pane
         .status_widget()
         .expect("status indicator should be visible");
-    assert_eq!(status.header(), "Working");
+    assert_eq!(status.header(), "处理中");
     assert_eq!(status.details(), None);
     assert!(chat.retry_status_header.is_none());
 }

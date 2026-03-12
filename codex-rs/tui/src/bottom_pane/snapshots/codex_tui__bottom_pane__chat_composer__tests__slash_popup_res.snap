@@ -1,6 +1,5 @@
 ---
 source: tui/src/bottom_pane/chat_composer.rs
-assertion_line: 2385
 expression: terminal.backend()
 ---
 "                                                            "
@@ -8,4 +7,4 @@ expression: terminal.backend()
 "                                                            "
 "                                                            "
 "                                                            "
-"  /resume  resume a saved chat                              "
+"  /resume  恢复已保存的会话                                 " Hidden by multi-width symbols: [(12, " "), (14, " "), (16, " "), (18, " "), (20, " "), (22, " "), (24, " "), (26, " ")]

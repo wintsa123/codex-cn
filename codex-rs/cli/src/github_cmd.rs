@@ -294,49 +294,49 @@ struct GithubWebhookRuntimeConfig {
 #[derive(Debug, clap::Parser)]
 #[command(override_usage = "codex github [OPTIONS]")]
 pub struct GithubCommand {
-    /// Address to listen on.
+    /// 监听地址。
     #[arg(long, value_name = "ADDR")]
     listen: Option<SocketAddr>,
 
-    /// Environment variable that contains the GitHub webhook secret.
+    /// 包含 GitHub webhook 密钥的环境变量。
     #[arg(long, value_name = "ENV")]
     webhook_secret_env: Option<String>,
 
-    /// Environment variable that contains the GitHub token used for API calls.
+    /// 包含用于 API 调用的 GitHub Token 的环境变量。
     #[arg(long, value_name = "ENV")]
     github_token_env: Option<String>,
 
-    /// Environment variable that contains the GitHub App ID.
+    /// 包含 GitHub App ID 的环境变量。
     #[arg(long, value_name = "ENV")]
     github_app_id_env: Option<String>,
 
-    /// Environment variable that contains the GitHub App private key.
+    /// 包含 GitHub App 私钥的环境变量。
     #[arg(long, value_name = "ENV")]
     github_app_private_key_env: Option<String>,
 
-    /// GitHub authentication mode.
+    /// GitHub 认证模式。
     #[arg(long, value_enum, value_name = "MODE")]
     auth_mode: Option<GithubAuthMode>,
 
-    /// Minimum required permission for the GitHub sender on the repository.
+    /// 对仓库触发者要求的最低 GitHub 权限。
     #[arg(long, value_enum, value_name = "PERMISSION")]
     min_permission: Option<MinPermission>,
 
-    /// Only handle events for these repositories (repeatable), e.g. OWNER/REPO.
+    /// 仅处理这些仓库的事件（可重复），例如 OWNER/REPO。
     ///
-    /// If omitted, all repositories are allowed (permission checks still apply).
+    /// 省略时允许所有仓库（仍会执行权限检查）。
     #[arg(long = "allow-repo", value_name = "OWNER/REPO")]
     allow_repo: Vec<String>,
 
-    /// Comment prefix that triggers Codex.
+    /// 触发 Codex 的评论前缀。
     #[arg(long, value_name = "PREFIX")]
     command_prefix: Option<String>,
 
-    /// Delete delivery marker files older than this many days (0 disables).
+    /// 删除超过此天数的投递标记文件（0 表示禁用）。
     #[arg(long, value_name = "DAYS")]
     delivery_ttl_days: Option<u64>,
 
-    /// Delete repo caches older than this many days since last use, when no worktrees exist (0 disables).
+    /// 当不存在 worktree 时，删除自上次使用起超过此天数的仓库缓存（0 表示禁用）。
     #[arg(long, value_name = "DAYS")]
     repo_ttl_days: Option<u64>,
 }

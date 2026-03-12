@@ -31,13 +31,13 @@ impl ChatWidget {
 
         let user_config_path = self.config.codex_home.join(CONFIG_TOML_FILE);
         items.push(SelectionItem {
-            name: "Global hooks (user)".to_string(),
+            name: "全局钩子（用户）".to_string(),
             description: Some(user_config_path.display().to_string()),
             actions: vec![Box::new({
                 let path = user_config_path.clone();
                 move |tx| {
                     tx.send(AppEvent::OpenHooksManager {
-                        scope_label: "Global hooks (user)".to_string(),
+                        scope_label: "全局钩子（用户）".to_string(),
                         path: path.clone(),
                         seed: HOOKS_CONFIG_SEED.to_string(),
                         disabled_reason: None,
@@ -78,12 +78,12 @@ impl ChatWidget {
                 .unwrap_or_else(|| config_path_display.clone());
 
             items.push(SelectionItem {
-                name: format!("Project hooks ({project_dir_display})"),
+                name: format!("项目钩子（{project_dir_display}）"),
                 description: Some(config_path_display),
                 selected_description: Some(selected_description),
                 actions: vec![Box::new({
                     let path = config_path.clone();
-                    let scope_label = format!("Project hooks ({project_dir_display})");
+                    let scope_label = format!("项目钩子（{project_dir_display}）");
                     let disabled_reason = layer.disabled_reason.clone();
                     move |tx| {
                         tx.send(AppEvent::OpenHooksManager {
@@ -103,7 +103,7 @@ impl ChatWidget {
             let project_root = codex_core::git_info::get_git_repo_root(self.config.cwd.as_path())
                 .unwrap_or_else(|| self.config.cwd.clone());
             let config_path = project_root.join(".codex").join(CONFIG_TOML_FILE);
-            let scope_label = format!("Project hooks ({})", project_root.display());
+            let scope_label = format!("项目钩子（{}）", project_root.display());
             items.push(SelectionItem {
                 name: scope_label.clone(),
                 description: Some(config_path.display().to_string()),
@@ -124,8 +124,8 @@ impl ChatWidget {
         }
 
         self.bottom_pane.show_selection_view(SelectionViewParams {
-            title: Some("Hooks".to_string()),
-            subtitle: Some("Choose a config.toml layer to manage.".to_string()),
+            title: Some("钩子".to_string()),
+            subtitle: Some("选择要管理的 config.toml 层。".to_string()),
             footer_hint: Some(standard_popup_hint_line()),
             items,
             ..Default::default()
@@ -143,8 +143,8 @@ impl ChatWidget {
         let mut items = Vec::new();
 
         items.push(SelectionItem {
-            name: "Add hook".to_string(),
-            description: Some("Create a new hook entry.".to_string()),
+            name: "添加钩子".to_string(),
+            description: Some("创建新的钩子条目。".to_string()),
             actions: vec![Box::new({
                 let scope_label = scope_label.clone();
                 let path = path.clone();
@@ -164,8 +164,8 @@ impl ChatWidget {
         });
 
         items.push(SelectionItem {
-            name: "Edit raw config.toml".to_string(),
-            description: Some("Edit the entire file (advanced).".to_string()),
+            name: "编辑原始 config.toml".to_string(),
+            description: Some("编辑整个文件（高级）。".to_string()),
             actions: vec![Box::new({
                 let scope_label = scope_label.clone();
                 let path = path.clone();
@@ -216,7 +216,7 @@ impl ChatWidget {
 
         let footer_note = disabled_reason
             .as_deref()
-            .map(|reason| Line::from(format!("Disabled: {reason}").dim()));
+            .map(|reason| Line::from(format!("已禁用：{reason}").dim()));
 
         self.bottom_pane.show_selection_view(SelectionViewParams {
             title: Some(scope_label),
@@ -224,7 +224,7 @@ impl ChatWidget {
             footer_note,
             footer_hint: Some(standard_popup_hint_line()),
             is_searchable: true,
-            search_placeholder: Some("Type to search hooks".to_string()),
+            search_placeholder: Some("输入以搜索钩子".to_string()),
             items,
             ..Default::default()
         });
@@ -241,7 +241,7 @@ impl ChatWidget {
         for event in DEFAULT_HOOK_EVENT_KEYS {
             items.push(SelectionItem {
                 name: (*event).to_string(),
-                description: Some("Press Enter to add a hook for this event.".to_string()),
+                description: Some("按 Enter 为此事件添加钩子。".to_string()),
                 actions: vec![Box::new({
                     let scope_label = scope_label.clone();
                     let path = path.clone();
@@ -264,7 +264,7 @@ impl ChatWidget {
         }
 
         items.push(SelectionItem {
-            name: "Back".to_string(),
+            name: "返回".to_string(),
             actions: vec![Box::new({
                 let scope_label = scope_label.clone();
                 let path = path.clone();
@@ -284,7 +284,7 @@ impl ChatWidget {
         });
 
         self.bottom_pane.show_selection_view(SelectionViewParams {
-            title: Some("Add hook".to_string()),
+            title: Some("添加钩子".to_string()),
             subtitle: Some(scope_label),
             footer_hint: Some(standard_popup_hint_line()),
             items,
@@ -304,7 +304,7 @@ impl ChatWidget {
         let mut items = Vec::new();
 
         items.push(SelectionItem {
-            name: "Edit".to_string(),
+            name: "编辑".to_string(),
             actions: vec![Box::new({
                 let scope_label = scope_label.clone();
                 let path = path.clone();
@@ -328,7 +328,7 @@ impl ChatWidget {
         });
 
         items.push(SelectionItem {
-            name: "Delete".to_string(),
+            name: "删除".to_string(),
             actions: vec![Box::new({
                 let scope_label = scope_label.clone();
                 let path = path.clone();
@@ -352,7 +352,7 @@ impl ChatWidget {
         });
 
         items.push(SelectionItem {
-            name: "Back".to_string(),
+            name: "返回".to_string(),
             actions: vec![Box::new({
                 let scope_label = scope_label.clone();
                 let path = path.clone();
@@ -394,7 +394,7 @@ impl ChatWidget {
         let context = format!("{scope_label} — {}", path.display());
         let view = CustomPromptView::new(
             title,
-            "Edit TOML and press Enter".to_string(),
+            "编辑 TOML 后按 Enter".to_string(),
             Some(context),
             Some(initial_text),
             Box::new(move |text: String| {
@@ -435,8 +435,8 @@ impl ChatWidget {
         let mut items = Vec::new();
 
         items.push(SelectionItem {
-            name: "Delete hook".to_string(),
-            description: Some("This cannot be undone.".to_string()),
+            name: "删除钩子".to_string(),
+            description: Some("此操作不可撤销。".to_string()),
             actions: vec![Box::new({
                 let scope_label = scope_label.clone();
                 let path = path.clone();
@@ -458,7 +458,7 @@ impl ChatWidget {
         });
 
         items.push(SelectionItem {
-            name: "Cancel".to_string(),
+            name: "取消".to_string(),
             actions: vec![Box::new({
                 let scope_label = scope_label.clone();
                 let path = path.clone();
@@ -482,7 +482,7 @@ impl ChatWidget {
         });
 
         self.bottom_pane.show_selection_view(SelectionViewParams {
-            title: Some("Confirm delete".to_string()),
+            title: Some("确认删除".to_string()),
             subtitle: Some(title),
             footer_hint: Some(standard_popup_hint_line()),
             items,

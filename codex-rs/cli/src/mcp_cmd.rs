@@ -23,13 +23,13 @@ use codex_rmcp_client::perform_oauth_login;
 use codex_utils_cli::CliConfigOverrides;
 use codex_utils_cli::format_env_display::format_env_display;
 
-/// Subcommands:
-/// - `list`   — list configured servers (with `--json`)
-/// - `get`    — show a single server (with `--json`)
-/// - `add`    — add a server launcher entry to `~/.codex/config.toml`
-/// - `remove` — delete a server entry
-/// - `login`  — authenticate with MCP server using OAuth
-/// - `logout` — remove OAuth credentials for MCP server
+/// 子命令：
+/// - `list`   — 列出已配置服务器（可配合 `--json`）
+/// - `get`    — 显示单个服务器（可配合 `--json`）
+/// - `add`    — 向 `~/.codex/config.toml` 添加服务器启动项
+/// - `remove` — 删除服务器条目
+/// - `login`  — 使用 OAuth 对 MCP 服务器进行认证
+/// - `logout` — 删除 MCP 服务器的 OAuth 凭据
 #[derive(Debug, clap::Parser)]
 pub struct McpCli {
     #[clap(flatten)]
@@ -51,17 +51,17 @@ pub enum McpSubcommand {
 
 #[derive(Debug, clap::Parser)]
 pub struct ListArgs {
-    /// Output the configured servers as JSON.
+    /// 以 JSON 输出已配置服务器。
     #[arg(long)]
     pub json: bool,
 }
 
 #[derive(Debug, clap::Parser)]
 pub struct GetArgs {
-    /// Name of the MCP server to display.
+    /// 要显示的 MCP 服务器名称。
     pub name: String,
 
-    /// Output the server configuration as JSON.
+    /// 以 JSON 输出服务器配置。
     #[arg(long)]
     pub json: bool,
 }
@@ -69,7 +69,7 @@ pub struct GetArgs {
 #[derive(Debug, clap::Parser)]
 #[command(override_usage = "codex mcp add [OPTIONS] <NAME> (--url <URL> | -- <COMMAND>...)")]
 pub struct AddArgs {
-    /// Name for the MCP server configuration.
+    /// MCP 服务器配置名称。
     pub name: String,
 
     #[command(flatten)]
@@ -95,16 +95,16 @@ pub struct AddMcpTransportArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct AddMcpStdioArgs {
-    /// Command to launch the MCP server.
-    /// Use --url for a streamable HTTP server.
+    /// 启动 MCP 服务器的命令。
+    /// 若为 streamable HTTP 服务器，请使用 --url。
     #[arg(
             trailing_var_arg = true,
             num_args = 0..,
         )]
     pub command: Vec<String>,
 
-    /// Environment variables to set when launching the server.
-    /// Only valid with stdio servers.
+    /// 启动服务器时设置的环境变量。
+    /// 仅对 stdio 服务器有效。
     #[arg(
         long,
         value_parser = parse_env_pair,
@@ -115,12 +115,12 @@ pub struct AddMcpStdioArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct AddMcpStreamableHttpArgs {
-    /// URL for a streamable HTTP MCP server.
+    /// streamable HTTP MCP 服务器的 URL。
     #[arg(long)]
     pub url: String,
 
-    /// Optional environment variable to read for a bearer token.
-    /// Only valid with streamable HTTP servers.
+    /// 用于读取 Bearer Token 的可选环境变量。
+    /// 仅对 streamable HTTP 服务器有效。
     #[arg(
         long = "bearer-token-env-var",
         value_name = "ENV_VAR",
@@ -131,23 +131,23 @@ pub struct AddMcpStreamableHttpArgs {
 
 #[derive(Debug, clap::Parser)]
 pub struct RemoveArgs {
-    /// Name of the MCP server configuration to remove.
+    /// 要删除的 MCP 服务器配置名称。
     pub name: String,
 }
 
 #[derive(Debug, clap::Parser)]
 pub struct LoginArgs {
-    /// Name of the MCP server to authenticate with oauth.
+    /// 要进行 OAuth 认证的 MCP 服务器名称。
     pub name: String,
 
-    /// Comma-separated list of OAuth scopes to request.
+    /// 要申请的 OAuth scope 列表（逗号分隔）。
     #[arg(long, value_delimiter = ',', value_name = "SCOPE,SCOPE")]
     pub scopes: Vec<String>,
 }
 
 #[derive(Debug, clap::Parser)]
 pub struct LogoutArgs {
-    /// Name of the MCP server to deauthenticate.
+    /// 要取消认证的 MCP 服务器名称。
     pub name: String,
 }
 

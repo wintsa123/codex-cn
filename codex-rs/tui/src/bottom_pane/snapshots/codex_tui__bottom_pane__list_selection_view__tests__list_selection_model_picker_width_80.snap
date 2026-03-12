@@ -3,7 +3,7 @@ source: tui/src/bottom_pane/list_selection_view.rs
 expression: "render_lines_with_width(&view, 80)"
 ---
                                                                                 
-  Select Model and Effort                                                       
+  选 择 模 型 与 推 理 强 度                                                             
                                                                                 
 › 1. gpt-5.1-codex (current)  Optimized for Codex. Balance of reasoning         
                               quality and coding ability.                       

@@ -5,11 +5,11 @@ const DEFAULT_CODEX_DMG_URL: &str = "https://persistent.oaistatic.com/codex-app-
 
 #[derive(Debug, Parser)]
 pub struct AppCommand {
-    /// Workspace path to open in Codex Desktop.
+    /// 在 Codex Desktop 中打开的工作区路径。
     #[arg(value_name = "PATH", default_value = ".")]
     pub path: PathBuf,
 
-    /// Override the macOS DMG download URL (advanced).
+    /// 覆盖 macOS DMG 下载地址（高级）。
     #[arg(long, default_value = DEFAULT_CODEX_DMG_URL)]
     pub download_url: String,
 }

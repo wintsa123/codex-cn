@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   tag-check:
-    if: ${{ github.repository == 'openai/codex' || github.repository == 'stellarlinkco/codex' }}
+    if: ${{ github.repository == 'openai/codex' || github.repository == 'stellarlinkco/codex' || github.repository == 'wintsa123/codex-cn' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -392,7 +392,7 @@ jobs:
             codex-rs/dist/${{ matrix.target }}/*
 
   build-stellar:
-    if: ${{ github.repository == 'stellarlinkco/codex' }}
+    if: ${{ github.repository == 'stellarlinkco/codex' || github.repository == 'wintsa123/codex-cn' }}
     needs: tag-check
     name: Build - ${{ matrix.runner }} - ${{ matrix.target }}${{ matrix.asset_suffix || '' }}
     runs-on: ${{ matrix.runner }}

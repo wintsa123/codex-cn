@@ -1,0 +1,181 @@
+name: manual-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing tag to attach assets to, for example rust-v1.2.6"
+        required: true
+        default: "rust-v1.2.6"
+        type: string
+      ref:
+        description: "Git ref to build, for example main or a tag"
+        required: true
+        default: "main"
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build - ${{ matrix.runner }} - ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: codex-rs
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Setup Node.js for Web UI
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build embedded Web UI assets
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          cd web
+          npm ci
+          npm run build
+          cd ..
+          rm -rf codex-rs/serve/assets/web
+          cp -R web/dist codex-rs/serve/assets/web
+
+      - name: Install Linux build dependencies
+        if: ${{ runner.os == 'Linux' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends pkg-config libcap-dev binutils
+
+      - uses: dtolnay/rust-toolchain@1.93.0
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cargo build
+        shell: bash
+        run: |
+          cargo build --target "${{ matrix.target }}" --release --timings --bin codex --bin codex-responses-api-proxy
+
+      - name: Verify GLIBC requirements
+        if: ${{ runner.os == 'Linux' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          limit="2.35"
+
+          require_max_glibc() {
+            local bin="$1"
+            local dynamic_out=""
+
+            dynamic_out="$(readelf -W --dynamic "$bin" 2>&1 || true)"
+            if echo "$dynamic_out" | grep -q "There is no dynamic section"; then
+              echo "${bin} is statically linked; no GLIBC requirement to verify"
+              return 0
+            fi
+
+            local max=""
+            max="$(
+              readelf -W --version-info "$bin" \
+                | grep -oE 'GLIBC_[0-9]+[.][0-9]+([.][0-9]+)?' \
+                | sed 's/^GLIBC_//' \
+                | sort -V \
+                | tail -n 1 \
+                || true
+            )"
+            if [[ -z "${max}" ]]; then
+              echo "Failed to detect GLIBC symbol versions in ${bin}" >&2
+              exit 1
+            fi
+
+            echo "${bin} max GLIBC: ${max}"
+            dpkg --compare-versions "${max}" le "${limit}" \
+              || { echo "❌ ${bin} requires GLIBC_${max} > GLIBC_${limit}" >&2; exit 1; }
+          }
+
+          require_max_glibc "target/${{ matrix.target }}/release/codex"
+          require_max_glibc "target/${{ matrix.target }}/release/codex-responses-api-proxy"
+
+      - name: Stage artifacts
+        shell: bash
+        run: |
+          ext=""
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            ext=".exe"
+          fi
+
+          dest="dist/${{ matrix.target }}"
+          mkdir -p "$dest"
+          cp "target/${{ matrix.target }}/release/codex${ext}" "$dest/codex-${{ matrix.target }}${ext}"
+          cp "target/${{ matrix.target }}/release/codex-responses-api-proxy${ext}" "$dest/codex-responses-api-proxy-${{ matrix.target }}${ext}"
+
+      - name: Compress artifacts
+        shell: bash
+        run: |
+          dest="dist/${{ matrix.target }}"
+          for f in "$dest"/*; do
+            base="$(basename "$f")"
+            if [[ "$base" == *.tar.gz || "$base" == *.zip ]]; then
+              continue
+            fi
+
+            tar -C "$dest" -czf "$dest/${base}.tar.gz" "$base"
+
+            if [[ "${{ runner.os }}" == "Windows" ]]; then
+              (cd "$dest" && 7z a "${base}.zip" "$base")
+            fi
+          done
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            codex-rs/dist/${{ matrix.target }}/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+
+      - name: Add config schema release asset
+        run: |
+          cp codex-rs/core/config.schema.json dist/config-schema.json
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag }}
+          name: ${{ inputs.release_tag }}
+          files: dist/**
+          append_body: true

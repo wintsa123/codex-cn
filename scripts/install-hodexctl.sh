@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo="${HODEXCTL_REPO:-${CODEX_REPO:-stellarlinkco/codex}}"
+repo="${HODEXCTL_REPO:-${CODEX_REPO:-wintsa123/codex-cn}}"
 controller_url_base="${HODEX_CONTROLLER_URL_BASE:-https://raw.githubusercontent.com}"
 controller_ref="${HODEX_CONTROLLER_REF:-main}"
 state_dir="${HODEX_STATE_DIR:-$HOME/.hodex}"

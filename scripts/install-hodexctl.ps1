@@ -1,7 +1,7 @@
 $ErrorActionPreference = "Stop"
 $originalProgressPreference = $ProgressPreference
 
-$repo = if ($env:HODEXCTL_REPO) { $env:HODEXCTL_REPO } elseif ($env:CODEX_REPO) { $env:CODEX_REPO } else { "stellarlinkco/codex" }
+$repo = if ($env:HODEXCTL_REPO) { $env:HODEXCTL_REPO } elseif ($env:CODEX_REPO) { $env:CODEX_REPO } else { "wintsa123/codex-cn" }
 $controllerUrlBase = if ($env:HODEX_CONTROLLER_URL_BASE) { $env:HODEX_CONTROLLER_URL_BASE.TrimEnd('/') } else { "https://raw.githubusercontent.com" }
 $controllerRef = if ($env:HODEX_CONTROLLER_REF) { $env:HODEX_CONTROLLER_REF } else { "main" }
 $stateDir = if ($env:HODEX_STATE_DIR) { $env:HODEX_STATE_DIR } else { $null }

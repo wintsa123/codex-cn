@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo="${CODEX_REPO:-stellarlinkco/codex}"
+repo="${CODEX_REPO:-wintsa123/codex-cn}"
 install_dir="${INSTALL_DIR:-"$HOME/.local/bin"}"
 bin_name="codex"
 

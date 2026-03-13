@@ -23,7 +23,7 @@
 **macOS, Linux, WSL:**
 
 ```shell
-curl -fsSL https://raw.githubusercontent.com/wintsa123/codex/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/wintsa123/codex-cn/main/scripts/install.sh | bash
 ```
 
 The shell install command above prefers `gnu` release assets on Linux and falls back to `musl` when needed; `gnu` builds require glibc >= 2.35 (Ubuntu 22.04+).
@@ -31,7 +31,7 @@ The shell install command above prefers `gnu` release assets on Linux and falls 
 **Windows PowerShell:**
 
 ```powershell
-irm https://raw.githubusercontent.com/wintsa123/codex/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/wintsa123/codex-cn/main/scripts/install.ps1 | iex
 ```
 
 Copy/paste the command for your platform above to download the latest Release binary for your OS/arch. The shell command installs `codex` to `~/.local/bin` and prints a PATH reminder.
@@ -43,13 +43,13 @@ Use `hodexctl` if you want to manage `hodex` separately without affecting an exi
 **macOS, Linux, WSL:**
 
 ```shell
-curl -fsSL https://raw.githubusercontent.com/wintsa123/codex/main/scripts/install-hodexctl.sh | bash
+curl -fsSL https://raw.githubusercontent.com/wintsa123/codex-cn/main/scripts/install-hodexctl.sh | bash
 ```
 
 **Windows PowerShell:**
 
 ```powershell
-irm https://raw.githubusercontent.com/wintsa123/codex/main/scripts/install-hodexctl.ps1 | iex
+irm https://raw.githubusercontent.com/wintsa123/codex-cn/main/scripts/install-hodexctl.ps1 | iex
 ```
 
 After install, use `hodexctl`, `hodexctl install`, or `hodexctl list`.

@@ -13,12 +13,12 @@ const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
 
 const PLATFORM_PACKAGE_BY_TARGET = {
-  "x86_64-unknown-linux-musl": "@openai/codex-linux-x64",
-  "aarch64-unknown-linux-musl": "@openai/codex-linux-arm64",
-  "x86_64-apple-darwin": "@openai/codex-darwin-x64",
-  "aarch64-apple-darwin": "@openai/codex-darwin-arm64",
-  "x86_64-pc-windows-msvc": "@openai/codex-win32-x64",
-  "aarch64-pc-windows-msvc": "@openai/codex-win32-arm64",
+  "x86_64-unknown-linux-musl": "@wintsa/condexcn-linux-x64",
+  "aarch64-unknown-linux-musl": "@wintsa/condexcn-linux-arm64",
+  "x86_64-apple-darwin": "@wintsa/condexcn-darwin-x64",
+  "aarch64-apple-darwin": "@wintsa/condexcn-darwin-arm64",
+  "x86_64-pc-windows-msvc": "@wintsa/condexcn-win32-x64",
+  "aarch64-pc-windows-msvc": "@wintsa/condexcn-win32-arm64",
 };
 
 const { platform, arch } = process;
@@ -95,8 +95,8 @@ try {
     const packageManager = detectPackageManager();
     const updateCommand =
       packageManager === "bun"
-        ? "bun install -g @openai/codex@latest"
-        : "npm install -g @openai/codex@latest";
+        ? "bun install -g @wintsa/condexcn@latest"
+        : "npm install -g @wintsa/condexcn@latest";
     throw new Error(
       `Missing optional dependency ${platformPackage}. Reinstall Codex: ${updateCommand}`,
     );
@@ -107,8 +107,8 @@ if (!vendorRoot) {
   const packageManager = detectPackageManager();
   const updateCommand =
     packageManager === "bun"
-      ? "bun install -g @openai/codex@latest"
-      : "npm install -g @openai/codex@latest";
+      ? "bun install -g @wintsa/condexcn@latest"
+      : "npm install -g @wintsa/condexcn@latest";
   throw new Error(
     `Missing optional dependency ${platformPackage}. Reinstall Codex: ${updateCommand}`,
   );

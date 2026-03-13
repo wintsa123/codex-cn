@@ -71,10 +71,29 @@ jobs:
 
           git checkout -B "${sync_branch}" origin/main
 
-          if ! git merge --no-ff --no-edit -X ours "upstream/${upstream_branch}"; then
+          prefer_upstream_path() {
+            local path="$1"
+
+            case "${path}" in
+              README.md|*/README.md|*/README.*)
+                return 0
+                ;;
+              scripts/*|*/scripts/*|.github/scripts/*)
+                return 0
+                ;;
+            esac
+
+            return 1
+          }
+
+          if ! git merge --no-ff --no-edit "upstream/${upstream_branch}"; then
             if git ls-files -u | grep -q .; then
               git ls-files -u | cut -f 2 | sort -u | while read -r file; do
-                git checkout --ours -- "${file}"
+                if prefer_upstream_path "${file}"; then
+                  git checkout --theirs -- "${file}"
+                else
+                  git checkout --ours -- "${file}"
+                fi
                 git add "${file}"
               done
               git commit --no-edit
@@ -112,7 +131,7 @@ jobs:
               "",
               `- upstream: \`${process.env.UPSTREAM_REPO}\``,
               `- branch: \`${process.env.UPSTREAM_BRANCH}\``,
-              "- conflict policy: prefer local changes on conflict to avoid overwriting Chinese customizations",
+              "- conflict policy: keep local changes by default, but prefer upstream for README and scripts paths",
               "",
               "Review the non-conflicting upstream updates before merging."
             ].join("\n");

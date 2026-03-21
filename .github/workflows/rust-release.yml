@@ -301,19 +301,37 @@ jobs:
       - name: Stage artifacts
         shell: bash
         run: |
+          set -euo pipefail
           dest="dist/${{ matrix.target }}"
           mkdir -p "$dest"
+          release_dir="target/${{ matrix.target }}/release"
 
-          cp target/${{ matrix.target }}/release/codex "$dest/codex-${{ matrix.target }}"
-          cp target/${{ matrix.target }}/release/codex-responses-api-proxy "$dest/codex-responses-api-proxy-${{ matrix.target }}"
+          cp_if_exists() {
+            local src="$1"
+            local out="$2"
+            if [[ -f "$src" ]]; then
+              cp "$src" "$out"
+            else
+              echo "warning: missing artifact $src"
+            fi
+          }
+
+          cp_if_exists "$release_dir/codex" "$dest/codex-${{ matrix.target }}"
+          cp_if_exists "$release_dir/codex-responses-api-proxy" "$dest/codex-responses-api-proxy-${{ matrix.target }}"
 
           if [[ "${{ matrix.target }}" == *linux* ]]; then
-            cp target/${{ matrix.target }}/release/codex.sigstore "$dest/codex-${{ matrix.target }}.sigstore"
-            cp target/${{ matrix.target }}/release/codex-responses-api-proxy.sigstore "$dest/codex-responses-api-proxy-${{ matrix.target }}.sigstore"
+            cp_if_exists "$release_dir/codex.sigstore" "$dest/codex-${{ matrix.target }}.sigstore"
+            cp_if_exists "$release_dir/codex-responses-api-proxy.sigstore" "$dest/codex-responses-api-proxy-${{ matrix.target }}.sigstore"
           fi
 
           if [[ "${{ matrix.target }}" == *apple-darwin ]]; then
-            cp target/${{ matrix.target }}/release/codex-${{ matrix.target }}.dmg "$dest/codex-${{ matrix.target }}.dmg"
+            cp_if_exists "$release_dir/codex-${{ matrix.target }}.dmg" "$dest/codex-${{ matrix.target }}.dmg"
+          fi
+
+          if ! compgen -G "$dest/*" > /dev/null; then
+            echo "❌ no release artifacts were staged from $release_dir" >&2
+            ls -lah "$release_dir" >&2 || true
+            exit 1
           fi
 
       - name: Compress artifacts

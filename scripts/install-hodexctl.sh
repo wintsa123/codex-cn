@@ -8,6 +8,41 @@ state_dir="${HODEX_STATE_DIR:-$HOME/.hodex}"
 command_dir="${HODEX_COMMAND_DIR:-${INSTALL_DIR:-}}"
 controller_url="${controller_url_base%/}/${repo}/${controller_ref}/scripts/hodexctl/hodexctl.sh"
 
+log_error() {
+  printf '%s\n' "$1" >&2
+}
+
+download_controller() {
+  local attempt max_attempts delay_seconds curl_stderr last_status
+  attempt=1
+  max_attempts=3
+  delay_seconds=1
+  curl_stderr=""
+  last_status=1
+
+  while ((attempt <= max_attempts)); do
+    curl_stderr="$(mktemp)"
+    if curl -fsSL "$controller_url" -o "$controller_path" 2>"$curl_stderr"; then
+      rm -f "$curl_stderr"
+      return 0
+    fi
+    last_status=$?
+    DOWNLOAD_ERROR_SUMMARY="$(tail -n 1 "$curl_stderr" 2>/dev/null || true)"
+    rm -f "$curl_stderr"
+
+    if ((attempt == max_attempts)); then
+      DOWNLOAD_ERROR_STATUS="$last_status"
+      return 1
+    fi
+
+    sleep "$delay_seconds"
+    attempt=$((attempt + 1))
+    delay_seconds=$((delay_seconds * 2))
+  done
+
+  return 1
+}
+
 select_profile_file() {
   if [[ -n "${SHELL:-}" ]]; then
     case "$SHELL" in
@@ -41,7 +76,10 @@ trap 'rm -rf "$tmp_dir"' EXIT
 controller_path="$tmp_dir/hodexctl.sh"
 
 printf '==> Download hodexctl manager script\n'
-curl -fsSL "$controller_url" -o "$controller_path"
+if ! download_controller; then
+  log_error "Failed to download hodexctl manager script from $controller_url: ${DOWNLOAD_ERROR_SUMMARY:-curl exited with status ${DOWNLOAD_ERROR_STATUS:-1}}"
+  exit 1
+fi
 chmod +x "$controller_path"
 printf '==> Start hodexctl initial install\n'
 

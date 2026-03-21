@@ -1,5 +1,6 @@
 import type {
     DecryptedMessage as ProtocolDecryptedMessage,
+    KanbanConfig as ProtocolKanbanConfig,
     Session,
     SessionSummary,
     SyncEvent as ProtocolSyncEvent,
@@ -39,6 +40,25 @@ export type DecryptedMessage = ProtocolDecryptedMessage & {
 }
 
 export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+
+export type ReasoningEffortPreset = {
+    effort: ReasoningEffort
+    description: string
+}
+
+export type ModelCatalogModel = {
+    id: string
+    displayName: string
+    description: string
+    isDefault: boolean
+    showInPicker: boolean
+    defaultReasoningEffort: ReasoningEffort
+    supportedReasoningEfforts: ReasoningEffortPreset[]
+}
+
+export type ModelsCatalogResponse = {
+    models: ModelCatalogModel[]
+}
 
 export type Machine = {
     id: string
@@ -199,3 +219,197 @@ export type VisibilityPayload = {
 }
 
 export type SyncEvent = ProtocolSyncEvent
+
+export type KanbanConfig = ProtocolKanbanConfig
+
+export type WorkspaceSummary = {
+    id: string
+    name: string
+    repoCount: number
+}
+
+export type WorkspaceRepoRefInput = {
+    fullName: string
+    color?: string | null
+    shortLabel?: string | null
+    defaultBranch?: string | null
+}
+
+export type WorkspaceRepoRef = {
+    fullName: string
+    color: string
+    shortLabel: string
+    defaultBranch: string
+}
+
+export type WorkspaceBoardColumn = {
+    id: string
+    name: string
+    position: number
+    autoTrigger?: 'startExecution' | 'closeIssue' | null
+}
+
+export type WorkspaceIssueRef = {
+    repo: string
+    number: number
+}
+
+export type WorkspaceBoardFilters = {
+    repos?: string[] | null
+    epics?: WorkspaceIssueRef[] | null
+    labels?: string[] | null
+    assignees?: string[] | null
+}
+
+export type WorkspaceBoardConfig = {
+    columns: WorkspaceBoardColumn[]
+    swimlaneMode: 'byEpic' | 'byRepo' | 'byAssignee' | 'none'
+    wipLimits: Record<string, number>
+    filters: WorkspaceBoardFilters
+}
+
+export type WorkspaceExecConfig = {
+    model?: string | null
+    reasoningEffort?: ReasoningEffort | null
+    sandbox?: 'readOnly' | 'workspaceWrite' | 'fullAccess' | null
+    systemPrompt?: string | null
+    prompt?: string | null
+    timeoutMinutes?: number | null
+    autoPr?: boolean | null
+    autoTest?: boolean | null
+}
+
+export type Workspace = {
+    id: string
+    name: string
+    repos: WorkspaceRepoRef[]
+    board: WorkspaceBoardConfig
+    defaultExec: WorkspaceExecConfig
+    createdAtMs: number
+    updatedAtMs: number
+}
+
+export type CreateWorkspaceRequest = {
+    name: string
+    repos: WorkspaceRepoRefInput[]
+    board?: WorkspaceBoardConfig | null
+    defaultExec?: WorkspaceExecConfig | null
+}
+
+export type UpdateWorkspaceRequest = {
+    name?: string | null
+    repos?: WorkspaceRepoRefInput[] | null
+    board?: WorkspaceBoardConfig | null
+    defaultExec?: WorkspaceExecConfig | null
+}
+
+export type GithubLabel = {
+    name: string
+    color: string
+}
+
+export type GithubKanbanCardSettings = {
+    promptPrefix?: string | null
+    model?: string | null
+    reasoningEffort?: ReasoningEffort | null
+}
+
+export type GithubKanbanConfig = {
+    columns: ProtocolKanbanConfig['columns']
+    cardPositions: ProtocolKanbanConfig['cardPositions']
+    cardSettings: Record<string, GithubKanbanCardSettings>
+}
+
+export type GithubWorkItem = {
+    workItemKey: string
+    repo: string
+    kind: 'issue' | 'pull' | string
+    number: number
+    title: string
+    state: string
+    url: string
+    updatedAt: number
+    labels: GithubLabel[]
+    comments: number
+}
+
+export type GithubWorkItemsSnapshot = {
+    fetchedAt: number
+    items: GithubWorkItem[]
+}
+
+export type GithubJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled' | string
+
+export type GithubJob = {
+    jobId: string
+    workItemKey: string
+    status: GithubJobStatus
+    createdAt: number
+    startedAt?: number | null
+    finishedAt?: number | null
+    lastError?: string | null
+    resultSummary?: string | null
+    threadId?: string | null
+    logPath?: string | null
+}
+
+export type GithubJobsResponse = {
+    jobs: GithubJob[]
+}
+
+export type GithubReposResponse = {
+    repos: string[]
+}
+
+export type SetGithubReposRequest = {
+    repos: string[]
+}
+
+export type GithubWorkItemDetail = {
+    repo: string
+    number: number
+    title: string
+    state: string
+    url: string
+    updatedAt: string
+    body: string
+}
+
+export type UpdateGithubKanbanCardSettingsRequest = {
+    workItemKey: string
+    promptPrefix?: string
+    model?: string
+    reasoningEffort?: ReasoningEffort | null
+}
+
+export type CloseGithubWorkItemRequest = {
+    workItemKey: string
+}
+
+export type GithubJobLogResponse = {
+    jobId: string
+    logText: string
+    truncated: boolean
+}
+
+export type MoveKanbanCardRequest = {
+    columnId: string
+    position: number
+}
+
+export type MoveGithubKanbanCardRequest = {
+    workItemKey: string
+    columnId: string
+    position: number
+    promptPrefix?: string
+    model?: string
+    reasoningEffort?: ReasoningEffort | null
+}
+
+export type BatchMoveKanbanCardsRequest = {
+    moves: Array<{
+        sessionId: string
+        columnId: string
+        position: number
+    }>
+}

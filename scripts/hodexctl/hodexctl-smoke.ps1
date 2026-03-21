@@ -26,6 +26,27 @@ function Get-Runner {
     return "powershell"
 }
 
+function Invoke-RunnerCapture {
+    param(
+        [string]$Runner,
+        [string[]]$ArgumentList
+    )
+
+    $stdoutPath = Join-Path $tempRoot ([System.Guid]::NewGuid().ToString("N") + ".stdout.txt")
+    $stderrPath = Join-Path $tempRoot ([System.Guid]::NewGuid().ToString("N") + ".stderr.txt")
+    try {
+        $process = Start-Process -FilePath $Runner -ArgumentList $ArgumentList -NoNewWindow -Wait -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+        return [pscustomobject]@{
+            ExitCode = $process.ExitCode
+            StdOut = if (Test-Path $stdoutPath) { Get-Content -LiteralPath $stdoutPath -Raw } else { "" }
+            StdErr = if (Test-Path $stderrPath) { Get-Content -LiteralPath $stderrPath -Raw } else { "" }
+        }
+    } finally {
+        Remove-Item -LiteralPath $stdoutPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function New-FakeSummaryAgent {
     param(
         [string]$BinDir,
@@ -83,13 +104,38 @@ try {
     Write-Host "==> Check PowerShell syntax"
     [void][System.Management.Automation.Language.Parser]::ParseFile($controllerPath, [ref]$null, [ref]$null)
 
-    Write-Host "==> Check help output"
+    Write-Host "==> Check graceful error output"
+    New-Item -ItemType Directory -Path $smokeStateDir -Force | Out-Null
+    New-Item -ItemType Directory -Path $smokeCommandDir -Force | Out-Null
     $runner = Get-Runner
+    $gracefulErrorResult = Invoke-RunnerCapture -Runner $runner -ArgumentList @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", $controllerPath,
+        "downgrade",
+        "-StateDir", $smokeStateDir,
+        "-CommandDir", $smokeCommandDir
+    )
+    if ($gracefulErrorResult.ExitCode -ne 1) { throw "Expected exit code 1; got: $($gracefulErrorResult.ExitCode)" }
+    if (-not [string]::IsNullOrWhiteSpace($gracefulErrorResult.StdOut)) {
+        throw "Expected empty stdout for graceful error path; got:`n$($gracefulErrorResult.StdOut)"
+    }
+    Assert-Contains -Text $gracefulErrorResult.StdErr -Expected "downgrade requires an explicit version"
+    if ($gracefulErrorResult.StdErr -like "*CategoryInfo*") { throw "Unexpected PowerShell CategoryInfo noise in error output" }
+    if ($gracefulErrorResult.StdErr -like "*FullyQualifiedErrorId*") { throw "Unexpected PowerShell FullyQualifiedErrorId noise in error output" }
+    if ($gracefulErrorResult.StdErr -like "*At line:*") { throw "Unexpected PowerShell location noise in error output" }
+
+    Write-Host "==> Check help output"
     $helpOutput = (& $runner -NoProfile -File $controllerPath -Help 2>&1 | Out-String)
     Assert-Contains -Text $helpOutput -Expected "Usage:"
     Assert-Contains -Text $helpOutput -Expected "hodexctl list"
     Assert-Contains -Text $helpOutput -Expected ".\hodexctl.ps1 install"
     Assert-Contains -Text $helpOutput -Expected "source <action>"
+
+    Write-Host "==> Check downgrade accepts explicit version argument"
+    $downgradeHelpOutput = (& $runner -NoProfile -File $controllerPath downgrade 1.0.0 -Help 2>&1 | Out-String)
+    if ($LASTEXITCODE -ne 0) { throw "Expected exit code 0; got: $LASTEXITCODE`n$downgradeHelpOutput" }
+    Assert-Contains -Text $downgradeHelpOutput -Expected "Usage:"
 
     Write-Host "==> Check source mode help output"
     $sourceHelpOutput = (& $runner -NoProfile -File $controllerPath source help 2>&1 | Out-String)
@@ -165,11 +211,21 @@ try {
     }
 
     Write-Host "==> Check source mode refuses to take over hodex"
-    $activateOutput = (& $runner -NoProfile -File $controllerPath source install -Activate 2>&1 | Out-String)
-    if ($LASTEXITCODE -eq 0) {
+    $activateResult = Invoke-RunnerCapture -Runner $runner -ArgumentList @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", $controllerPath,
+        "source",
+        "install",
+        "-Activate"
+    )
+    if ($activateResult.ExitCode -eq 0) {
         throw "Source mode should not accept -Activate"
     }
-    Assert-Contains -Text $activateOutput -Expected "Source mode does not take over hodex"
+    if (-not [string]::IsNullOrWhiteSpace($activateResult.StdOut)) {
+        throw "Expected empty stdout for -Activate refusal; got:`n$($activateResult.StdOut)"
+    }
+    Assert-Contains -Text $activateResult.StdErr -Expected "Source mode does not take over hodex"
 
     Write-Host "==> Check manager-install does not fake hodex release"
     $env:HODEXCTL_SKIP_MAIN = "1"
@@ -234,6 +290,25 @@ try {
     Assert-Contains -Text $wrapperContent -Expected ('$env:HODEX_STATE_DIR = "' + $customStateDir + '"')
     Assert-Contains -Text $wrapperContent -Expected ('$forwardedArgs = @($args)')
     Assert-Contains -Text $wrapperContent -Expected ('@("-StateDir", "' + $customStateDir + '") + $forwardedArgs')
+
+    if ($env:OS -ne "Windows_NT") {
+        Write-Host "==> Check install-hodexctl.ps1 fails cleanly on non-Windows"
+        $installScriptPath = Join-Path (Split-Path -Parent $scriptDir) 'install-hodexctl.ps1'
+        $nonWindowsInstallResult = Invoke-RunnerCapture -Runner $runner -ArgumentList @(
+            "-NoProfile",
+            "-ExecutionPolicy", "Bypass",
+            "-File", $installScriptPath
+        )
+        if ($nonWindowsInstallResult.ExitCode -ne 1) { throw "Expected exit code 1 on non-Windows installer run; got: $($nonWindowsInstallResult.ExitCode)" }
+        if (-not [string]::IsNullOrWhiteSpace($nonWindowsInstallResult.StdOut)) {
+            throw "Expected empty stdout for non-Windows installer failure; got:`n$($nonWindowsInstallResult.StdOut)"
+        }
+        Assert-Contains -Text $nonWindowsInstallResult.StdErr -Expected "This installer supports Windows PowerShell only; use install-hodexctl.sh on macOS/Linux/WSL."
+        if ($nonWindowsInstallResult.StdErr -like "*CategoryInfo*") { throw "Unexpected PowerShell CategoryInfo noise in non-Windows installer output" }
+        if ($nonWindowsInstallResult.StdErr -like "*FullyQualifiedErrorId*") { throw "Unexpected PowerShell FullyQualifiedErrorId noise in non-Windows installer output" }
+        if ($nonWindowsInstallResult.StdErr -like "*Line |*") { throw "Unexpected PowerShell location noise in non-Windows installer output" }
+        if ($nonWindowsInstallResult.StdErr -like "*At line:*") { throw "Unexpected PowerShell location noise in non-Windows installer output" }
+    }
 
     if ($env:OS -eq "Windows_NT") {
         $statusViaWrapper = (& $runner -NoProfile -File $wrapperPath status 2>&1 | Out-String)
@@ -313,7 +388,17 @@ try {
         New-Item -ItemType Directory -Path $releaseStateDir -Force | Out-Null
         New-Item -ItemType Directory -Path $releaseCommandDir -Force | Out-Null
 
-        $sourceExe = (Get-Command pwsh).Source
+        $sourceExe = $null
+        foreach ($candidate in @("tar.exe", "curl.exe")) {
+            $command = Get-Command $candidate -ErrorAction SilentlyContinue
+            if ($command -and $command.CommandType -eq "Application" -and -not [string]::IsNullOrWhiteSpace($command.Source)) {
+                $sourceExe = $command.Source
+                break
+            }
+        }
+        if ([string]::IsNullOrWhiteSpace($sourceExe)) {
+            throw "Missing tar.exe/curl.exe; cannot build smoke release assets."
+        }
         Copy-Item $sourceExe (Join-Path $releaseDir "codex-x86_64-pc-windows-msvc.exe") -Force
         Copy-Item $sourceExe (Join-Path $releaseDir "codex-command-runner.exe") -Force
         Copy-Item $sourceExe (Join-Path $releaseDir "codex-windows-sandbox-setup.exe") -Force
@@ -361,6 +446,9 @@ try {
 
             $env:HODEX_RELEASE_BASE_URL = "http://127.0.0.1:$releasePort"
             $releaseInstallOutput = (& $runner -NoProfile -File $controllerPath install -Yes -NoPathUpdate -StateDir $releaseStateDir -CommandDir $releaseCommandDir 2>&1 | Out-String)
+            if ($releaseInstallOutput -notlike "*Install complete:*") {
+                throw "Release install failed unexpectedly:`n$releaseInstallOutput"
+            }
             Assert-Contains -Text $releaseInstallOutput -Expected "Install complete:"
             $releaseStatusOutput = (& $runner -NoProfile -File $controllerPath status -StateDir $releaseStateDir 2>&1 | Out-String)
             Assert-Contains -Text $releaseStatusOutput -Expected "Windows runtime components: complete"
@@ -475,9 +563,18 @@ Write-Output `$hodexSource
 
 	            Write-Host "==> Check Windows missing helper fails strictly"
 	            $env:HODEX_RELEASE_BASE_URL = "http://127.0.0.1:$brokenReleasePort"
-	            $brokenInstallOutput = (& $runner -NoProfile -File $controllerPath install -Yes -NoPathUpdate -StateDir (Join-Path $tempRoot 'broken-state') -CommandDir (Join-Path $tempRoot 'broken-command') 2>&1 | Out-String)
-	            if ($LASTEXITCODE -eq 0) { throw "Windows release install with missing helper should not succeed" }
-            Assert-Contains -Text $brokenInstallOutput -Expected "Windows release asset missing required helper"
+	            $brokenInstallResult = Invoke-RunnerCapture -Runner $runner -ArgumentList @(
+	                "-NoProfile",
+	                "-ExecutionPolicy", "Bypass",
+	                "-File", $controllerPath,
+	                "install",
+	                "-Yes",
+	                "-NoPathUpdate",
+	                "-StateDir", (Join-Path $tempRoot 'broken-state'),
+	                "-CommandDir", (Join-Path $tempRoot 'broken-command')
+	            )
+	            if ($brokenInstallResult.ExitCode -eq 0) { throw "Windows release install with missing helper should not succeed" }
+            Assert-Contains -Text $brokenInstallResult.StdErr -Expected "Windows release asset missing required helper"
         } finally {
             try { if ($releaseServer -and -not $releaseServer.HasExited) { $releaseServer.Kill() } } catch {}
             try { if ($brokenServer -and -not $brokenServer.HasExited) { $brokenServer.Kill() } } catch {}
@@ -491,7 +588,7 @@ Write-Output `$hodexSource
         Assert-Contains -Text $sourceListOutput -Expected "No source profiles recorded"
 
         Write-Host "==> Check source mode local loopback sync"
-        if ((Get-Command git -ErrorAction SilentlyContinue) -and (Get-Command cargo -ErrorAction SilentlyContinue) -and (Get-Command rustc -ErrorAction SilentlyContinue)) {
+        if ((Get-Command git -ErrorAction SilentlyContinue) -and (Get-Command cargo -ErrorAction SilentlyContinue) -and (Get-Command rustc -ErrorAction SilentlyContinue) -and (Get-Command link.exe -ErrorAction SilentlyContinue)) {
             New-Item -ItemType Directory -Path (Join-Path $sourceRepoDir "src") -Force | Out-Null
             New-Item -ItemType Directory -Path $smokeCommandDir -Force | Out-Null
 
@@ -566,7 +663,7 @@ fn main() {
             if (!(Test-Path $smokeSourceCheckoutDir)) { throw "Source checkout should not be deleted" }
             if (Test-Path (Join-Path $smokeCommandDir "hodexctl.cmd")) { throw "hodexctl wrapper was not deleted" }
         } else {
-            Write-Host "==> Missing git/cargo/rustc; skip source loopback integration test"
+            Write-Host "==> Missing git/cargo/rustc/link.exe; skip source loopback integration test"
         }
     } else {
         Write-Host "==> Non-Windows environment; skip runtime checks"

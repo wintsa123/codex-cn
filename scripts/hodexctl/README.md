@@ -48,7 +48,7 @@ hodexctl
 
 - Windows PowerShell:
   - `irm ... | iex` runs in the current session; the installer tries to refresh `$env:Path`, so `hodexctl status` should work right away.
-  - If it still doesn’t work: reopen PowerShell, or run `%LOCALAPPDATA%\\hodex\\commands\\hodexctl.cmd status`.
+  - If it still doesn't work: reopen PowerShell, or run `$env:LOCALAPPDATA\\hodex\\commands\\hodexctl.cmd status`.
 
 If you prefer to download the script and run it manually:
 
@@ -112,6 +112,7 @@ Common values for `PATH source` in `hodexctl status`:
 - `preexisting-profile` / `preexisting-user-path`: already present, not owned by `hodexctl`.
 - `current-process-only`: only visible in the current session (for example manual `export PATH=...`); status will suggest `hodexctl repair` to persist it.
 - `disabled` / `user-skipped`: you disabled auto-write or skipped the prompt.
+- `<unknown>`: legacy or incomplete install state; `hodexctl repair` will usually normalize it on the next successful pass.
 
 ### Behavior Notes
 

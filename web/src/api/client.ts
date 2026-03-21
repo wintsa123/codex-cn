@@ -1,15 +1,28 @@
 import type {
     AttachmentMetadata,
     AuthResponse,
+    BatchMoveKanbanCardsRequest,
     DeleteUploadResponse,
     ListDirectoryResponse,
     FileReadResponse,
     FileSearchResponse,
     GitCommandResponse,
+    GithubJobsResponse,
+    GithubJobLogResponse,
+    GithubKanbanConfig,
+    GithubReposResponse,
+    GithubWorkItemDetail,
+    GithubWorkItemsSnapshot,
+    KanbanConfig,
+    CloseGithubWorkItemRequest,
+    CreateWorkspaceRequest,
     MachinePathsExistsResponse,
     MachinesResponse,
     MessagesResponse,
+    MoveGithubKanbanCardRequest,
+    MoveKanbanCardRequest,
     ModelMode,
+    ModelsCatalogResponse,
     PermissionMode,
     PushSubscriptionPayload,
     PushUnsubscribePayload,
@@ -18,10 +31,15 @@ import type {
     SlashCommandsResponse,
     SkillsResponse,
     SpawnResponse,
+    SetGithubReposRequest,
+    UpdateWorkspaceRequest,
     UploadFileResponse,
+    UpdateGithubKanbanCardSettingsRequest,
     VisibilityPayload,
     SessionResponse,
-    SessionsResponse
+    SessionsResponse,
+    Workspace,
+    WorkspaceSummary
 } from '@/types/api'
 
 type ApiClientOptions = {
@@ -159,6 +177,148 @@ export class ApiClient {
 
     async getSessions(): Promise<SessionsResponse> {
         return await this.request<SessionsResponse>('/api/sessions')
+    }
+
+    async getKanban(): Promise<KanbanConfig> {
+        return await this.request<KanbanConfig>('/api/kanban')
+    }
+
+    async getModelsCatalog(): Promise<ModelsCatalogResponse> {
+        return await this.request<ModelsCatalogResponse>('/api/models/catalog')
+    }
+
+    async listWorkspaces(): Promise<WorkspaceSummary[]> {
+        return await this.request<WorkspaceSummary[]>('/api/workspaces')
+    }
+
+    async createWorkspace(payload: CreateWorkspaceRequest): Promise<Workspace> {
+        return await this.request<Workspace>('/api/workspaces', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        })
+    }
+
+    async getWorkspace(workspaceId: string): Promise<Workspace> {
+        return await this.request<Workspace>(`/api/workspaces/${encodeURIComponent(workspaceId)}`)
+    }
+
+    async updateWorkspace(workspaceId: string, payload: UpdateWorkspaceRequest): Promise<Workspace> {
+        return await this.request<Workspace>(`/api/workspaces/${encodeURIComponent(workspaceId)}`, {
+            method: 'PUT',
+            body: JSON.stringify(payload)
+        })
+    }
+
+    async deleteWorkspace(workspaceId: string): Promise<void> {
+        await this.request<{}>(`/api/workspaces/${encodeURIComponent(workspaceId)}`, { method: 'DELETE' })
+    }
+
+    async syncWorkspace(workspaceId: string): Promise<void> {
+        await this.request<{}>(`/api/workspaces/${encodeURIComponent(workspaceId)}/sync`, { method: 'POST' })
+    }
+
+    async getWorkspaceWorkItems(workspaceId: string): Promise<GithubWorkItemsSnapshot> {
+        return await this.request<GithubWorkItemsSnapshot>(`/api/workspaces/${encodeURIComponent(workspaceId)}/work-items`)
+    }
+
+    async getWorkspaceKanban(workspaceId: string): Promise<GithubKanbanConfig> {
+        return await this.request<GithubKanbanConfig>(`/api/workspaces/${encodeURIComponent(workspaceId)}/kanban`)
+    }
+
+    async moveWorkspaceKanbanCard(workspaceId: string, payload: MoveGithubKanbanCardRequest): Promise<void> {
+        await this.request<{}>(`/api/workspaces/${encodeURIComponent(workspaceId)}/kanban/cards`, {
+            method: 'PUT',
+            body: JSON.stringify(payload)
+        })
+    }
+
+    async updateWorkspaceKanbanCardSettings(workspaceId: string, payload: UpdateGithubKanbanCardSettingsRequest): Promise<void> {
+        await this.request<{}>(`/api/workspaces/${encodeURIComponent(workspaceId)}/kanban/cards/settings`, {
+            method: 'PUT',
+            body: JSON.stringify(payload)
+        })
+    }
+
+    async getWorkspaceJobs(workspaceId: string): Promise<GithubJobsResponse> {
+        return await this.request<GithubJobsResponse>(`/api/workspaces/${encodeURIComponent(workspaceId)}/jobs`)
+    }
+
+    async getWorkspaceJobLog(workspaceId: string, jobId: string): Promise<GithubJobLogResponse> {
+        return await this.request<GithubJobLogResponse>(
+            `/api/workspaces/${encodeURIComponent(workspaceId)}/jobs/${encodeURIComponent(jobId)}/log`
+        )
+    }
+
+    async getGithubWorkItems(): Promise<GithubWorkItemsSnapshot> {
+        return await this.request<GithubWorkItemsSnapshot>('/api/github/work-items')
+    }
+
+    async getGithubRepos(): Promise<GithubReposResponse> {
+        return await this.request<GithubReposResponse>('/api/github/repos')
+    }
+
+    async setGithubRepos(payload: SetGithubReposRequest): Promise<void> {
+        await this.request<{}>('/api/github/repos', {
+            method: 'PUT',
+            body: JSON.stringify(payload)
+        })
+    }
+
+    async syncGithubWorkItems(): Promise<void> {
+        await this.request<{}>('/api/github/sync', { method: 'POST' })
+    }
+
+    async getGithubKanban(): Promise<GithubKanbanConfig> {
+        return await this.request<GithubKanbanConfig>('/api/github/kanban')
+    }
+
+    async moveGithubKanbanCard(payload: MoveGithubKanbanCardRequest): Promise<void> {
+        await this.request<{}>('/api/github/kanban/cards', {
+            method: 'PUT',
+            body: JSON.stringify(payload)
+        })
+    }
+
+    async updateGithubKanbanCardSettings(payload: UpdateGithubKanbanCardSettingsRequest): Promise<void> {
+        await this.request<{}>('/api/github/kanban/cards/settings', {
+            method: 'PUT',
+            body: JSON.stringify(payload)
+        })
+    }
+
+    async getGithubWorkItemDetail(workItemKey: string): Promise<GithubWorkItemDetail> {
+        const params = new URLSearchParams()
+        params.set('workItemKey', workItemKey)
+        return await this.request<GithubWorkItemDetail>(`/api/github/work-items/detail?${params.toString()}`)
+    }
+
+    async closeGithubWorkItem(payload: CloseGithubWorkItemRequest): Promise<void> {
+        await this.request<{}>('/api/github/work-items/close', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        })
+    }
+
+    async getGithubJobs(): Promise<GithubJobsResponse> {
+        return await this.request<GithubJobsResponse>('/api/github/jobs')
+    }
+
+    async getGithubJobLog(jobId: string): Promise<GithubJobLogResponse> {
+        return await this.request<GithubJobLogResponse>(`/api/github/jobs/${encodeURIComponent(jobId)}/log`)
+    }
+
+    async moveKanbanCard(sessionId: string, payload: MoveKanbanCardRequest): Promise<void> {
+        await this.request(`/api/kanban/cards/${encodeURIComponent(sessionId)}`, {
+            method: 'PUT',
+            body: JSON.stringify(payload)
+        })
+    }
+
+    async batchMoveKanbanCards(payload: BatchMoveKanbanCardsRequest): Promise<void> {
+        await this.request('/api/kanban/cards/batch', {
+            method: 'PUT',
+            body: JSON.stringify(payload)
+        })
     }
 
     async getPushVapidPublicKey(): Promise<PushVapidPublicKeyResponse> {

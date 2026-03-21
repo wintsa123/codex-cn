@@ -112,13 +112,15 @@ impl LoginServer {
 /// Handle used to signal the login server loop to exit.
 #[derive(Clone, Debug)]
 pub struct ShutdownHandle {
-    shutdown_notify: Arc<tokio::sync::Notify>,
+    shutdown_tx: tokio::sync::watch::Sender<bool>,
 }
 
 impl ShutdownHandle {
     /// Signals the login loop to terminate.
     pub fn shutdown(&self) {
-        self.shutdown_notify.notify_waiters();
+        // `watch` channels are stateful, so this can't be "missed" if the server loop
+        // hasn't started awaiting the cancellation signal yet.
+        let _ = self.shutdown_tx.send(true);
     }
 }
 
@@ -168,15 +170,21 @@ pub fn run_login_server(opts: ServerOptions) -> io::Result<LoginServer> {
         })
     };
 
-    let shutdown_notify = Arc::new(tokio::sync::Notify::new());
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
     let server_handle = {
-        let shutdown_notify = shutdown_notify.clone();
         let server = server;
         tokio::spawn(async move {
             let result = loop {
                 tokio::select! {
-                    _ = shutdown_notify.notified() => {
-                        break Err(io::Error::other("Login was not completed"));
+                    changed = shutdown_rx.changed() => {
+                        match changed {
+                            Ok(()) if *shutdown_rx.borrow() => {
+                                break Err(io::Error::other("Login was not completed"));
+                            }
+                            Ok(()) => continue,
+                            // All senders dropped: treat as cancellation to avoid hanging the server loop.
+                            Err(_) => break Err(io::Error::other("Login was not completed")),
+                        }
                     }
                     maybe_req = rx.recv() => {
                         let Some(req) = maybe_req else {
@@ -228,7 +236,7 @@ pub fn run_login_server(opts: ServerOptions) -> io::Result<LoginServer> {
         auth_url,
         actual_port,
         server_handle,
-        shutdown_handle: ShutdownHandle { shutdown_notify },
+        shutdown_handle: ShutdownHandle { shutdown_tx },
     })
 }
 

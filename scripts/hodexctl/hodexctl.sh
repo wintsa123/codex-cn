@@ -213,8 +213,8 @@ Release list usage:
   ${usage_command}
 
 List view:
-  ↑ / ↓    Move selection
-  ← / →    Change page
+  Up / Down      Move selection
+  Left / Right   Change page
   n / p    Next / previous page
   /        Search
   0        Enter source download/management
@@ -1675,6 +1675,30 @@ PY
       }' >"$state_file.tmp.$$"
   mv "$state_file.tmp.$$" "$state_file"
   rm -f "$existing_file"
+}
+
+persist_release_state_snapshot() {
+  local state_file="$1"
+
+  # Read caller-provided state_* locals via bash dynamic scope to keep the
+  # write_state_file argument list consistent across install flows.
+  write_state_file \
+    "$state_file" \
+    "$state_installed_version" \
+    "$state_release_tag" \
+    "$state_release_name" \
+    "$state_asset_name" \
+    "$state_binary_path" \
+    "$state_controller_path" \
+    "$COMMAND_DIR" \
+    "$COMMAND_DIR/hodex" \
+    "$COMMAND_DIR/hodexctl" \
+    "$PATH_UPDATE_MODE" \
+    "$PATH_PROFILE" \
+    "$PATH_MANAGED_BY_HODEXCTL" \
+    "$PATH_DETECTED_SOURCE" \
+    "$state_node_setup_choice" \
+    "$state_installed_at"
 }
 
 load_state_env() {
@@ -3246,7 +3270,7 @@ render_release_details_page() {
   if ((COLOR_ENABLED)); then
     ai_hint="${COLOR_ALERT} AI summary (A) ${COLOR_RESET}${hint_style}"
   fi
-  printf '%sEnter/Space next page  ↑↓ scroll line  ←→ scroll page  %s  i install  d download  b back  q quit%s\n' "$hint_style" "$ai_hint" "$reset_style"
+  printf '%sEnter/Space next page  Up/Down scroll line  Left/Right scroll page  %s  i install  d download  b back  q quit%s\n' "$hint_style" "$ai_hint" "$reset_style"
   printf '%sPage %d/%d | Lines %d-%d / %d | A=AI summary (hodex/codex)%s\n\n' "$status_style" "$current_page" "$total_pages" "$start_line" "$end_line" "$total_lines" "$reset_style"
   sed -n "${start_line},${end_line}p" "$detail_file"
 }
@@ -3587,8 +3611,8 @@ show_release_help_popup() {
   else
     printf 'Keyboard shortcuts\n\n'
   fi
-  printf '  ↑ / ↓    Move selection\n'
-  printf '  ← / →    Page\n'
+  printf '  Up / Down      Move selection\n'
+  printf '  Left / Right   Page\n'
   printf '  n / p    Next / previous page\n'
   printf '  /        Search (type to filter)\n'
   printf '  0        Enter source download / manage\n'
@@ -3645,7 +3669,7 @@ render_release_selector() {
 
   printf '\033[H\033[2J'
   printf '%sHodex version selector%s (%s)\n' "$header_style" "$reset_style" "$PLATFORM_LABEL"
-  printf '%sUp/Down move  Enter view changelog/source menu  /search  n next  p prev  ←→ page  0 source menu  ? help  q quit%s\n' "$hint_style" "$reset_style"
+  printf '%sUp/Down move  Enter view changelog/source menu  /search  n next  p prev  Left/Right page  0 source menu  ? help  q quit%s\n' "$hint_style" "$reset_style"
   printf '%sSearch%s: %s\n' "$hint_style" "$reset_style" "$search_display"
 
   total=${#filtered_indices[@]}
@@ -5308,7 +5332,7 @@ def truncate_label(text, width):
         return text
     if width <= 1:
         return text[:width]
-    return text[: width - 1] + "…"
+    return text[: width - 1] + "..."
 
 
 def render_progress(completed, total, started_at, current_label, fresh_count, final=False):
@@ -5788,7 +5812,7 @@ apply_source_profile_runtime_choice() {
   printf 'no\n'
 }
 
-perform_source_build() {
+perform_source_sync() {
   local state_file="$1"
   local profile_name="$2"
   local activation_mode="${3:-preserve}"
@@ -5879,7 +5903,7 @@ perform_source_install() {
   run_source_install_wizard || return 0
   profile_name="$(resolve_source_profile_name "$state_file" 0)"
   activation_mode="no"
-  perform_source_build "$state_file" "$profile_name" "$activation_mode" "Download source and prepare toolchain" 1
+  perform_source_sync "$state_file" "$profile_name" "$activation_mode" "Download source and prepare toolchain" 1
 }
 
 perform_source_update() {
@@ -5890,7 +5914,7 @@ perform_source_update() {
   profile_name="$(resolve_source_profile_name "$state_file" 1)"
   current_ref="$(state_get_source_profile_field "$state_file" "$profile_name" "current_ref")"
   [[ -n "$SOURCE_REF" && "$SOURCE_REF" != "$DEFAULT_SOURCE_REF" ]] || SOURCE_REF="${current_ref:-$DEFAULT_SOURCE_REF}"
-  perform_source_build "$state_file" "$profile_name" "no" "Update source"
+  perform_source_sync "$state_file" "$profile_name" "no" "Update source"
 }
 
 perform_source_rebuild() {
@@ -5918,7 +5942,7 @@ perform_source_switch() {
       die "source switch requires --ref to specify branch/tag/commit."
     fi
   fi
-  perform_source_build "$state_file" "$profile_name" "no" "Switch ref and sync source"
+  perform_source_sync "$state_file" "$profile_name" "no" "Switch ref and sync source"
 }
 
 perform_source_status() {
@@ -6245,15 +6269,6 @@ install_node_with_nvm() {
   nvm alias default 'lts/*' >/dev/null 2>&1 || true
 }
 
-create_wrappers() {
-  local command_dir="$1"
-  local binary_path="$2"
-  local controller_path="$3"
-  ensure_dir_writable "$command_dir"
-  generate_hodex_wrapper "$command_dir/hodex" "$binary_path"
-  generate_hodexctl_wrapper "$command_dir/hodexctl" "$controller_path"
-}
-
 remove_managed_runtime_wrappers_from_dir() {
   local command_dir="$1"
   local state_file="$2"
@@ -6325,6 +6340,7 @@ perform_install_like() {
   local existing_node_choice=""
   local release_file tmp_dir download_path asset_line asset_name asset_url asset_digest
   local resolved_version detected_version release_tag release_name binary_dir binary_path controller_path install_time
+  local state_installed_version state_release_tag state_release_name state_asset_name state_binary_path state_controller_path state_node_setup_choice state_installed_at
   local -a asset_candidates=()
 
   if [[ -f "$state_file" ]]; then
@@ -6388,43 +6404,19 @@ perform_install_like() {
   fi
 
   install_time="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-  write_state_file \
-    "$state_file" \
-    "$resolved_version" \
-    "$release_tag" \
-    "$release_name" \
-    "$asset_name" \
-    "$binary_path" \
-    "$controller_path" \
-    "$COMMAND_DIR" \
-    "$COMMAND_DIR/hodex" \
-    "$COMMAND_DIR/hodexctl" \
-    "$PATH_UPDATE_MODE" \
-    "$PATH_PROFILE" \
-    "$PATH_MANAGED_BY_HODEXCTL" \
-    "$PATH_DETECTED_SOURCE" \
-    "$NODE_SETUP_CHOICE" \
-    "$install_time"
+  state_installed_version="$resolved_version"
+  state_release_tag="$release_tag"
+  state_release_name="$release_name"
+  state_asset_name="$asset_name"
+  state_binary_path="$binary_path"
+  state_controller_path="$controller_path"
+  state_node_setup_choice="$NODE_SETUP_CHOICE"
+  state_installed_at="$install_time"
+  persist_release_state_snapshot "$state_file"
 
   sync_runtime_wrappers_from_state "$state_file" "$COMMAND_DIR" "$controller_path"
   update_path_if_needed
-  write_state_file \
-    "$state_file" \
-    "$resolved_version" \
-    "$release_tag" \
-    "$release_name" \
-    "$asset_name" \
-    "$binary_path" \
-    "$controller_path" \
-    "$COMMAND_DIR" \
-    "$COMMAND_DIR/hodex" \
-    "$COMMAND_DIR/hodexctl" \
-    "$PATH_UPDATE_MODE" \
-    "$PATH_PROFILE" \
-    "$PATH_MANAGED_BY_HODEXCTL" \
-    "$PATH_DETECTED_SOURCE" \
-    "$NODE_SETUP_CHOICE" \
-    "$install_time"
+  persist_release_state_snapshot "$state_file"
 
   log_step "Install complete: $binary_path"
   "$binary_path" --version
@@ -6455,6 +6447,7 @@ perform_manager_install() {
   local had_existing_state=0
   local install_time
   local controller_path
+  local state_installed_version state_release_tag state_release_name state_asset_name state_binary_path state_controller_path state_node_setup_choice state_installed_at
 
   if [[ -f "$state_file" ]]; then
     load_state_env "$state_file"
@@ -6473,43 +6466,19 @@ perform_manager_install() {
   fi
 
   install_time="${STATE_INSTALLED_AT:-$(date -u +"%Y-%m-%dT%H:%M:%SZ")}"
-  write_state_file \
-    "$state_file" \
-    "$STATE_INSTALLED_VERSION" \
-    "$STATE_RELEASE_TAG" \
-    "$STATE_RELEASE_NAME" \
-    "$STATE_ASSET_NAME" \
-    "$STATE_BINARY_PATH" \
-    "$controller_path" \
-    "$COMMAND_DIR" \
-    "$COMMAND_DIR/hodex" \
-    "$COMMAND_DIR/hodexctl" \
-    "$PATH_UPDATE_MODE" \
-    "$PATH_PROFILE" \
-    "$PATH_MANAGED_BY_HODEXCTL" \
-    "$PATH_DETECTED_SOURCE" \
-    "$STATE_NODE_SETUP_CHOICE" \
-    "$install_time"
+  state_installed_version="$STATE_INSTALLED_VERSION"
+  state_release_tag="$STATE_RELEASE_TAG"
+  state_release_name="$STATE_RELEASE_NAME"
+  state_asset_name="$STATE_ASSET_NAME"
+  state_binary_path="$STATE_BINARY_PATH"
+  state_controller_path="$controller_path"
+  state_node_setup_choice="$STATE_NODE_SETUP_CHOICE"
+  state_installed_at="$install_time"
+  persist_release_state_snapshot "$state_file"
 
   sync_runtime_wrappers_from_state "$state_file" "$COMMAND_DIR" "$controller_path"
   update_path_if_needed
-  write_state_file \
-    "$state_file" \
-    "$STATE_INSTALLED_VERSION" \
-    "$STATE_RELEASE_TAG" \
-    "$STATE_RELEASE_NAME" \
-    "$STATE_ASSET_NAME" \
-    "$STATE_BINARY_PATH" \
-    "$controller_path" \
-    "$COMMAND_DIR" \
-    "$COMMAND_DIR/hodex" \
-    "$COMMAND_DIR/hodexctl" \
-    "$PATH_UPDATE_MODE" \
-    "$PATH_PROFILE" \
-    "$PATH_MANAGED_BY_HODEXCTL" \
-    "$PATH_DETECTED_SOURCE" \
-    "$STATE_NODE_SETUP_CHOICE" \
-    "$install_time"
+  persist_release_state_snapshot "$state_file"
 
   log_step "hodexctl installed: $COMMAND_DIR/hodexctl"
   log_info "State dir: $STATE_DIR"

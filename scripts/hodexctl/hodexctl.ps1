@@ -71,14 +71,11 @@ $script:SourceGitUrl = $GitUrl
 $script:SourceCheckoutDir = $CheckoutDir
 $script:SourceCheckoutPolicy = if ($RemoveCheckout) { "remove" } elseif ($KeepCheckout) { "keep" } else { "ask" }
 $script:ExplicitSourceRef = $PSBoundParameters.ContainsKey("Ref")
+$script:ExplicitVersion = $PSBoundParameters.ContainsKey("Version")
 $script:RawSourceHelpRequest = ($Command -eq "source" -and $Version -eq "help")
 
 if ($PSBoundParameters.ContainsKey("Name")) {
     Write-Warning "-Name is deprecated; use -Profile."
-}
-
-if ($Activate -or $NoActivate) {
-    throw "Source mode does not take over hodex; source checkout is for sync and toolchain management only."
 }
 
 function Show-Usage {
@@ -357,17 +354,20 @@ function Invoke-GhApiFallback {
 function Get-GitHubApiFailureMessage {
     param([string]$BaseMessage)
 
+    $base = $BaseMessage.Trim()
+    $baseSentence = if ($base -match '[.!?]$') { $base } else { "$base." }
+
     switch ($script:LastGhFallbackReason) {
-        "gh-success" { return "$BaseMessage`n$($script:LastGhFallbackDetail)" }
-        "gh-missing" { return "$BaseMessage. gh not found; set GITHUB_TOKEN or install/login to gh and retry." }
-        "gh-not-authenticated" { return "$BaseMessage. gh fallback was attempted but gh is not logged in; run 'gh auth login' or set GITHUB_TOKEN and retry." }
-        "gh-access-denied" { return "$BaseMessage. gh fallback was attempted but the current gh login/token lacks permission for $($script:RepoName): $($script:LastGhFallbackDetail)" }
-        "gh-failed" { return "$BaseMessage. gh fallback was attempted but gh api still failed: $($script:LastGhFallbackDetail)" }
+        "gh-success" { return "$baseSentence`n$($script:LastGhFallbackDetail)" }
+        "gh-missing" { return "$baseSentence gh not found; set GITHUB_TOKEN or install/login to gh and retry." }
+        "gh-not-authenticated" { return "$baseSentence gh fallback was attempted but gh is not logged in; run 'gh auth login' or set GITHUB_TOKEN and retry." }
+        "gh-access-denied" { return "$baseSentence gh fallback was attempted but the current gh login/token lacks permission for $($script:RepoName): $($script:LastGhFallbackDetail)" }
+        "gh-failed" { return "$baseSentence gh fallback was attempted but gh api still failed: $($script:LastGhFallbackDetail)" }
         default {
             if (-not [string]::IsNullOrWhiteSpace($script:ApiToken)) {
-                return "$BaseMessage. GITHUB_TOKEN was provided, but GitHub API is still unavailable; you can also try 'gh auth login' and retry."
+                return "$baseSentence GITHUB_TOKEN was provided, but GitHub API is still unavailable; you can also try 'gh auth login' and retry."
             }
-            return "$BaseMessage. Set GITHUB_TOKEN or install/login to gh and retry."
+            return "$baseSentence Set GITHUB_TOKEN or install/login to gh and retry."
         }
     }
 }
@@ -531,6 +531,13 @@ function Invoke-DownloadWithProgress {
     )
 
     Invoke-WithRetry -Label "release-download" -ScriptBlock {
+        if (-not ("System.Net.Http.HttpClient" -as [type])) {
+            try {
+                Add-Type -AssemblyName System.Net.Http
+            } catch {
+                Fail "Failed to load System.Net.Http; cannot download release assets."
+            }
+        }
         $client = [System.Net.Http.HttpClient]::new()
         $progressEnabled = [Environment]::UserInteractive -and -not [Console]::IsOutputRedirected
         $previousProgressPreference = $global:ProgressPreference
@@ -751,7 +758,7 @@ function Normalize-Parameters {
     }
 
     if ($script:RequestedCommand -notin $validCommands) {
-        if ($PSBoundParameters.ContainsKey("Version")) {
+        if ($script:ExplicitVersion) {
             Fail "Unexpected extra arg: $script:RequestedVersion"
         }
         $script:RequestedVersion = $script:RequestedCommand
@@ -780,37 +787,37 @@ function Normalize-Parameters {
             }
         }
         "downgrade" {
-            if (-not $PSBoundParameters.ContainsKey("Version") -or (Normalize-Version $script:RequestedVersion) -eq "latest") {
+            if (-not $script:ExplicitVersion -or (Normalize-Version $script:RequestedVersion) -eq "latest") {
                 Fail "downgrade requires an explicit version"
             }
         }
         "uninstall" {
-            if ($PSBoundParameters.ContainsKey("Version")) {
+            if ($script:ExplicitVersion) {
                 Fail "uninstall does not accept a version argument"
             }
         }
         "status" {
-            if ($PSBoundParameters.ContainsKey("Version")) {
+            if ($script:ExplicitVersion) {
                 Fail "status does not accept a version argument"
             }
         }
         "list" {
-            if ($PSBoundParameters.ContainsKey("Version")) {
+            if ($script:ExplicitVersion) {
                 Fail "list does not accept a version argument"
             }
         }
         "relink" {
-            if ($PSBoundParameters.ContainsKey("Version")) {
+            if ($script:ExplicitVersion) {
                 Fail "relink does not accept a version argument"
             }
         }
         "repair" {
-            if ($PSBoundParameters.ContainsKey("Version")) {
+            if ($script:ExplicitVersion) {
                 Fail "repair does not accept a version argument"
             }
         }
         "manager-install" {
-            if ($PSBoundParameters.ContainsKey("Version")) {
+            if ($script:ExplicitVersion) {
                 Fail "manager-install does not accept a version argument"
             }
         }
@@ -2013,7 +2020,6 @@ function Generate-HodexctlCmdWrapper {
         [string]$StateDir
     )
 
-    $runner = Get-ControllerCommand
     $content = @"
 @echo off
 set "HODEX_DISPLAY_NAME=hodexctl"
@@ -2022,11 +2028,13 @@ if not exist "$ControllerPath" (
   echo hodexctl controller is missing; reinstall hodexctl. 1>&2
   exit /b 1
 )
+set "HODEXCTL_RUNNER=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
+where pwsh >nul 2>nul && set "HODEXCTL_RUNNER=pwsh"
 if "%~1"=="" (
-  $runner -NoProfile -ExecutionPolicy Bypass -File "$ControllerPath" help
+  "%HODEXCTL_RUNNER%" -NoProfile -ExecutionPolicy Bypass -File "$ControllerPath" help
   exit /b %ERRORLEVEL%
 )
-$runner -NoProfile -ExecutionPolicy Bypass -File "$ControllerPath" %*
+"%HODEXCTL_RUNNER%" -NoProfile -ExecutionPolicy Bypass -File "$ControllerPath" %*
 "@
 
     Set-Content -LiteralPath $WrapperPath -Value $content -Encoding ASCII
@@ -2039,7 +2047,6 @@ function Generate-HodexctlPs1Wrapper {
         [string]$StateDir
     )
 
-    $runner = Get-ControllerCommand
     $content = @"
 `$ErrorActionPreference = "Stop"
 `$env:HODEX_DISPLAY_NAME = "hodexctl"
@@ -2047,6 +2054,22 @@ function Generate-HodexctlPs1Wrapper {
 if (-not (Test-Path -LiteralPath "$ControllerPath")) {
     Write-Error "hodexctl controller is missing; reinstall hodexctl."
     exit 1
+}
+`$pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
+if (`$pwsh -and -not [string]::IsNullOrWhiteSpace(`$pwsh.Source)) {
+    `$runner = `$pwsh.Source
+} else {
+    `$powershellFallback = Join-Path `$PSHOME "powershell.exe"
+    if (Test-Path -LiteralPath `$powershellFallback) {
+        `$runner = `$powershellFallback
+    } else {
+        `$powershell = Get-Command powershell -ErrorAction SilentlyContinue
+        if (`$powershell -and -not [string]::IsNullOrWhiteSpace(`$powershell.Source)) {
+            `$runner = `$powershell.Source
+        } else {
+            `$runner = "powershell"
+        }
+    }
 }
 `$forwardedArgs = @(`$args)
 `$hasStateDirOverride = `$false
@@ -2060,30 +2083,16 @@ foreach (`$arg in `$forwardedArgs) {
     }
 }
 if (`$forwardedArgs.Count -eq 0) {
-    & "$runner" -NoProfile -ExecutionPolicy Bypass -File "$ControllerPath" help
+    & `$runner -NoProfile -ExecutionPolicy Bypass -File "$ControllerPath" help
     exit `$LASTEXITCODE
 }
 if (-not `$hasStateDirOverride) {
     `$forwardedArgs = @("-StateDir", "$StateDir") + `$forwardedArgs
 }
-& "$runner" -NoProfile -ExecutionPolicy Bypass -File "$ControllerPath" @forwardedArgs
+& `$runner -NoProfile -ExecutionPolicy Bypass -File "$ControllerPath" @forwardedArgs
 "@
 
     Set-Content -LiteralPath $WrapperPath -Value $content -Encoding UTF8
-}
-
-function Create-Wrappers {
-    param(
-        [string]$CurrentCommandDir,
-        [string]$BinaryPath,
-        [string]$ControllerPath
-    )
-
-    Ensure-DirWritable $CurrentCommandDir
-    Generate-HodexCmdWrapper -WrapperPath (Join-Path $CurrentCommandDir "hodex.cmd") -BinaryPath $BinaryPath
-    Generate-HodexPs1Wrapper -WrapperPath (Join-Path $CurrentCommandDir "hodex.ps1") -BinaryPath $BinaryPath
-    Generate-HodexctlCmdWrapper -WrapperPath (Join-Path $CurrentCommandDir "hodexctl.cmd") -ControllerPath $ControllerPath
-    Generate-HodexctlPs1Wrapper -WrapperPath (Join-Path $CurrentCommandDir "hodexctl.ps1") -ControllerPath $ControllerPath
 }
 
 function Remove-ManagedRuntimeWrappersFromDir {
@@ -3669,7 +3678,7 @@ function Get-SourceActivationMode {
     return "no"
 }
 
-function Invoke-SourceBuild {
+function Invoke-SourceSync {
     param(
         [string]$ProfileName,
         [string]$ActivationMode = "preserve",
@@ -3758,7 +3767,7 @@ function Invoke-SourceInstall {
         return
     }
     $profileName = Resolve-SourceProfileName -RequireExisting $false
-    Invoke-SourceBuild -ProfileName $profileName -ActivationMode "no" -ActionLabel "Download source and prepare toolchain" -SkipPlanConfirm
+    Invoke-SourceSync -ProfileName $profileName -ActivationMode "no" -ActionLabel "Download source and prepare toolchain" -SkipPlanConfirm
 }
 
 function Invoke-SourceUpdate {
@@ -3767,10 +3776,10 @@ function Invoke-SourceUpdate {
     }
     $profileName = Resolve-SourceProfileName -RequireExisting $true
     $existing = Get-SourceProfile -ProfileName $profileName
-    if (-not $PSBoundParameters.ContainsKey("Ref")) {
+    if (-not $script:ExplicitSourceRef) {
         $script:SourceRef = [string]$existing.current_ref
     }
-    Invoke-SourceBuild -ProfileName $profileName -ActivationMode "no" -ActionLabel "Update source"
+    Invoke-SourceSync -ProfileName $profileName -ActivationMode "no" -ActionLabel "Update source"
 }
 
 function Invoke-SourceRebuild {
@@ -3791,7 +3800,7 @@ function Invoke-SourceSwitch {
             Fail "source switch requires -Ref to specify branch/tag/commit."
         }
     }
-    Invoke-SourceBuild -ProfileName $profileName -ActivationMode "no" -ActionLabel "Switch ref and sync source"
+    Invoke-SourceSync -ProfileName $profileName -ActivationMode "no" -ActionLabel "Switch ref and sync source"
 }
 
 function Invoke-SourceStatus {
@@ -4502,60 +4511,75 @@ function Invoke-Repair {
 }
 
 if (-not $env:HODEXCTL_SKIP_MAIN) {
-    Ensure-LocalToolPaths
-    Normalize-Parameters
-    if ($script:RawSourceHelpRequest -or ($script:RequestedCommand -eq "source" -and $script:SourceAction -eq "help")) {
-        Show-SourceUsage
-        exit 0
-    }
-    Detect-Platform
-    $script:State = Load-State
+    try {
+        Ensure-LocalToolPaths
+        Normalize-Parameters
+        if ($Activate -or $NoActivate) {
+            Fail "Source mode does not take over hodex; source checkout is for sync and toolchain management only."
+        }
+        if ($script:RawSourceHelpRequest -or ($script:RequestedCommand -eq "source" -and $script:SourceAction -eq "help")) {
+            Show-SourceUsage
+            exit 0
+        }
+        Detect-Platform
+        $script:State = Load-State
 
-    switch ($script:RequestedCommand) {
-        "install" {
-            Invoke-InstallLike -RequestedVersion $script:RequestedVersion -ActionLabel "Install"
-        }
-        "upgrade" {
-            Invoke-InstallLike -RequestedVersion $script:RequestedVersion -ActionLabel "Upgrade"
-        }
-        "download" {
-            Invoke-Download -RequestedVersion $script:RequestedVersion
-        }
-        "downgrade" {
-            Invoke-InstallLike -RequestedVersion $script:RequestedVersion -ActionLabel "Downgrade"
-        }
-        "source" {
-            switch ($script:SourceAction) {
-                "install" { Invoke-SourceInstall }
-                "update" { Invoke-SourceUpdate }
-                "rebuild" { Invoke-SourceRebuild }
-                "switch" { Invoke-SourceSwitch }
-                "status" { Invoke-SourceStatus }
-                "uninstall" { Invoke-SourceUninstall }
-                "list" { Invoke-SourceList }
-                default { Show-SourceUsage }
+        switch ($script:RequestedCommand) {
+            "install" {
+                Invoke-InstallLike -RequestedVersion $script:RequestedVersion -ActionLabel "Install"
+            }
+            "upgrade" {
+                Invoke-InstallLike -RequestedVersion $script:RequestedVersion -ActionLabel "Upgrade"
+            }
+            "download" {
+                Invoke-Download -RequestedVersion $script:RequestedVersion
+            }
+            "downgrade" {
+                Invoke-InstallLike -RequestedVersion $script:RequestedVersion -ActionLabel "Downgrade"
+            }
+            "source" {
+                switch ($script:SourceAction) {
+                    "install" { Invoke-SourceInstall }
+                    "update" { Invoke-SourceUpdate }
+                    "rebuild" { Invoke-SourceRebuild }
+                    "switch" { Invoke-SourceSwitch }
+                    "status" { Invoke-SourceStatus }
+                    "uninstall" { Invoke-SourceUninstall }
+                    "list" { Invoke-SourceList }
+                    default { Show-SourceUsage }
+                }
+            }
+            "uninstall" {
+                Invoke-Uninstall
+            }
+            "status" {
+                Invoke-Status
+            }
+            "list" {
+                Invoke-List
+            }
+            "relink" {
+                Invoke-Relink
+            }
+            "repair" {
+                Invoke-Repair
+            }
+            "manager-install" {
+                Invoke-ManagerInstall
+            }
+            default {
+                Fail "Unknown command: $script:RequestedCommand"
             }
         }
-        "uninstall" {
-            Invoke-Uninstall
+    } catch {
+        $message = $_.Exception.Message
+        if ([string]::IsNullOrWhiteSpace($message)) {
+            $message = ($_ | Out-String).Trim()
         }
-        "status" {
-            Invoke-Status
+        if ([string]::IsNullOrWhiteSpace($message)) {
+            $message = "Unknown error."
         }
-        "list" {
-            Invoke-List
-        }
-        "relink" {
-            Invoke-Relink
-        }
-        "repair" {
-            Invoke-Repair
-        }
-        "manager-install" {
-            Invoke-ManagerInstall
-        }
-        default {
-            Fail "Unknown command: $script:RequestedCommand"
-        }
+        [Console]::Error.WriteLine($message)
+        exit 1
     }
 }

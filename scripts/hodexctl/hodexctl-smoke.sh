@@ -159,7 +159,7 @@ bash -lc '
 ' >"$tmp_dir/wsl-detect.txt"
 assert_contains "$tmp_dir/wsl-detect.txt" "WSL"
 
-log_step "Check Linux asset candidate prefers musl"
+log_step "Check Linux asset candidate order prefers gnu before musl"
 CONTROLLER_PATH_ENV="$CONTROLLER_PATH" \
 bash -lc '
   set -euo pipefail
@@ -169,6 +169,9 @@ bash -lc '
   ARCH_NAME="x86_64"
   get_asset_candidates
 ' >"$tmp_dir/linux-candidates.txt"
+if [[ "$(head -n 1 "$tmp_dir/linux-candidates.txt")" != "codex-x86_64-unknown-linux-gnu" ]]; then
+  die "Expected gnu asset candidate to be preferred first on Linux"
+fi
 assert_contains "$tmp_dir/linux-candidates.txt" "codex-x86_64-unknown-linux-musl"
 assert_contains "$tmp_dir/linux-candidates.txt" "codex-x86_64-unknown-linux-gnu"
 
@@ -211,6 +214,17 @@ HOME="$installer_home_dir" SHELL="/bin/zsh" HODEXCTL_NO_PATH_UPDATE=1 HODEX_CONT
 assert_contains "$installer_no_path_output" "==> Install complete"
 assert_contains "$installer_no_path_output" "$installer_state_dir_no_path/commands/hodexctl status"
 assert_not_contains "$installer_no_path_output" "source \""
+
+log_step "Check installer download failure stays concise"
+missing_installer_root="$tmp_dir/missing-installer-root"
+HOME="$installer_home_dir" SHELL="/bin/zsh" HODEX_CONTROLLER_URL_BASE="file://$missing_installer_root" \
+  HODEXCTL_REPO="$installer_repo" HODEX_STATE_DIR="$tmp_dir/installer-state-missing" \
+  bash "$INSTALLER_PATH" >"$tmp_dir/installer-failure-stdout.txt" 2>"$tmp_dir/installer-failure-stderr.txt" && die "Installer should fail when controller download is unavailable"
+assert_contains "$tmp_dir/installer-failure-stdout.txt" "==> Download hodexctl manager script"
+assert_contains "$tmp_dir/installer-failure-stderr.txt" "Failed to download hodexctl manager script"
+if [[ "$(wc -l <"$tmp_dir/installer-failure-stderr.txt")" -ne 1 ]]; then
+  die "Installer download failure should stay on a single stderr line"
+fi
 
 log_step "Check legacy state.json uninstall still clears PATH block"
 legacy_home_dir="$tmp_dir/legacy-home"

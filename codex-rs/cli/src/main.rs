@@ -39,12 +39,10 @@ use supports_color::Stream;
 mod app_cmd;
 #[cfg(target_os = "macos")]
 mod desktop_app;
-mod github_cmd;
 mod mcp_cmd;
 #[cfg(not(windows))]
 mod wsl_paths;
 
-use crate::github_cmd::GithubCommand;
 use crate::mcp_cmd::McpCli;
 
 use codex_core::config::Config;
@@ -90,10 +88,8 @@ enum Subcommand {
     #[clap(visible_alias = "e")]
     Exec(ExecCli),
 
-    /// 启动本地 GitHub webhook 监听器，并将任务委托给 Codex。
-    Github(GithubCommand),
-
     /// 以 Web UI 服务器模式启动 Codex（HTTP+SSE）。
+    #[clap(alias = "github")]
     Serve(ServeCli),
 
     /// 以非交互模式执行代码审查。
@@ -592,9 +588,6 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 root_config_overrides.clone(),
             );
             codex_exec::run_main(exec_cli, arg0_paths.clone()).await?;
-        }
-        Some(Subcommand::Github(cmd)) => {
-            github_cmd::run_main(cmd, root_config_overrides).await?;
         }
         Some(Subcommand::Serve(mut serve_cli)) => {
             prepend_config_flags(
@@ -1121,10 +1114,10 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn github_subcommand_parses() {
+    fn github_subcommand_alias_parses_as_serve() {
         let cli = MultitoolCli::try_parse_from(["codex", "github"].as_ref())
             .expect("parse should succeed");
-        assert_matches!(cli.subcommand, Some(Subcommand::Github(_)));
+        assert_matches!(cli.subcommand, Some(Subcommand::Serve(_)));
     }
 
     fn finalize_resume_from_args(args: &[&str]) -> TuiCli {

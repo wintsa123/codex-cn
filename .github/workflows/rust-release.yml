@@ -669,7 +669,9 @@ jobs:
       id-token: write
     uses: ./.github/workflows/rust-release-windows.yml
     with:
-      release-lto: ${{ contains(github.ref_name, '-alpha') && 'thin' || 'fat' }}
+      # Windows release builds are the most time-sensitive ones in CI.
+      # Keep them on thin LTO so the native MSVC path stays within the job budget.
+      release-lto: thin
     secrets: inherit
 
   shell-tool-mcp:
